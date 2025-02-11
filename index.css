@@ -1,0 +1,263 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==============================================
+   🚫 Text Selection Control
+   UI chrome is not selectable; only meaningful
+   content areas (inputs, code, diffs) are.
+   ============================================== */
+
+/* Disable selection on all UI elements by default */
+body {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Re-enable for form inputs and editable areas */
+input,
+textarea,
+select,
+[contenteditable] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Re-enable for code/diff viewers, file content, and markdown */
+.select-text,
+pre,
+code,
+.prose {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* ==============================================
+   🎨 Granite Studio Theme - Sky Blue Palette
+   ============================================== */
+
+:root {
+  /* Primary Sky Blue Colors */
+  --color-primary-50: #f0f9ff;
+  --color-primary-100: #e0f2fe;
+  --color-primary-200: #bae6fd;
+  --color-primary-300: #7dd3fc;
+  --color-primary-400: #38bdf8;
+  --color-primary-500: #0ea5e9;
+  --color-primary-600: #0284c7;
+  --color-primary-700: #0369a1;
+  --color-primary-800: #075985;
+  --color-primary-900: #0c4a6e;
+
+  /* RGB values for transparency effects */
+  --primary-400-rgb: 56, 189, 248;
+  --primary-500-rgb: 14, 165, 233;
+  --primary-300-rgb: 125, 211, 252;
+
+  /* Typography */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+  /* Border Radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1rem;
+  --radius-3xl: 1.5rem;
+  --radius-4xl: 2rem;
+  --radius-full: 100px;
+
+  /* Light Theme Variables */
+  --bg-panel-primary: rgba(255, 255, 255, 0.9);
+  --bg-panel-secondary: rgba(255, 255, 255, 0.7);
+  --bg-button: rgba(241, 245, 249, 0.8);
+  --bg-button-hover: rgba(226, 232, 240, 0.9);
+  --bg-code: #fafafa;
+  --border-default: rgba(148, 163, 184, 0.2);
+  --border-subtle: rgba(148, 163, 184, 0.15);
+  --border-active: rgba(14, 165, 233, 0.3);
+  --scrollbar-thumb: rgba(156, 163, 175, 0.4);
+  --scrollbar-thumb-hover: rgba(156, 163, 175, 0.6);
+  --shadow-panel: 0 4px 24px -4px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.5) inset;
+  --shadow-button-hover: 0 0 12px -2px rgba(14, 165, 233, 0.15);
+}
+
+.dark {
+  /* Dark Theme Variables — SAP Quartz Dark inspired */
+  --bg-panel-primary: rgba(29, 34, 40, 0.95);
+  --bg-panel-secondary: rgba(41, 49, 58, 0.7);
+  --bg-button: rgba(41, 49, 58, 0.8);
+  --bg-button-hover: rgba(53, 74, 95, 0.7);
+  --bg-code: linear-gradient(135deg, rgba(29, 34, 40, 0.97), rgba(41, 49, 58, 0.98));
+  --border-default: rgba(134, 150, 167, 0.18);
+  --border-subtle: rgba(134, 150, 167, 0.12);
+  --border-active: rgba(108, 180, 238, 0.35);
+  --scrollbar-thumb: rgba(83, 100, 113, 0.5);
+  --scrollbar-thumb-hover: rgba(83, 100, 113, 0.7);
+  --shadow-panel: 0 4px 24px -4px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(134, 150, 167, 0.06) inset;
+  --shadow-button-hover: 0 0 10px -2px rgba(108, 180, 238, 0.18);
+}
+
+/* Glassmorphism Panels */
+.glass-panel-primary {
+  background: var(--bg-panel-primary);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-panel);
+}
+
+.glass-panel-secondary {
+  background: var(--bg-panel-secondary);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.05);
+}
+
+.dark .glass-panel-secondary {
+  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.2);
+}
+
+/* Glass Buttons */
+.glass-button {
+  background: var(--bg-button);
+  backdrop-filter: blur(4px);
+  border: 1px solid var(--border-default);
+  transition: all 0.2s ease;
+}
+
+.glass-button:hover {
+  background: var(--bg-button-hover);
+  border-color: var(--border-active);
+  box-shadow: var(--shadow-button-hover);
+}
+
+.glass-button-active {
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  box-shadow: 0 0 16px -4px rgba(14, 165, 233, 0.25);
+}
+
+.glass-button-active:hover {
+  background: rgba(14, 165, 233, 0.2);
+  box-shadow: 0 0 20px -4px rgba(14, 165, 233, 0.35);
+}
+
+.dark .glass-button-active {
+  background: rgba(108, 180, 238, 0.1);
+  border: 1px solid rgba(108, 180, 238, 0.25);
+  box-shadow: 0 0 12px -4px rgba(108, 180, 238, 0.15);
+}
+
+.dark .glass-button-active:hover {
+  background: rgba(108, 180, 238, 0.16);
+  box-shadow: 0 0 16px -4px rgba(108, 180, 238, 0.22);
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  0% {
+    opacity: 0;
+  }
+
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+
+/* Density Mode Overrides */
+.density-compact {
+  font-size: 0.95rem;
+}
+
+/* Override common spacing utilities when in compact mode */
+.density-compact .p-6,
+.density-compact .p-8 {
+  padding: 1rem !important;
+}
+
+.density-compact .py-4 {
+  padding-top: 0.5rem !important;
+  padding-bottom: 0.5rem !important;
+}
+
+.density-compact .px-6 {
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+}
+
+.density-compact .gap-6,
+.density-compact .gap-8 {
+  gap: 1rem !important;
+}
+
+.density-compact .gap-4 {
+  gap: 0.5rem !important;
+}
+
+.density-compact .h-16 {
+  height: 3.5rem !important;
+}
+
+.density-compact .text-xl {
+  font-size: 1.1rem !important;
+}
+
+.density-compact .text-2xl {
+  font-size: 1.25rem !important;
+}
+
+/* Compact specific elements */
+.density-compact input,
+.density-compact button,
+.density-compact select {
+  padding-top: 0.4rem !important;
+  padding-bottom: 0.4rem !important;
+  font-size: 0.9rem !important;
+}
+
+.density-compact .mb-8 {
+  margin-bottom: 1rem !important;
+}

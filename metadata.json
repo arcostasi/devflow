@@ -1,0 +1,5 @@
+{
+  "name": "DevFlow",
+  "description": "Uma ferramenta de gerenciamento de projetos minimalista estilo SAP Fiori com quadros Kanban, painéis de atividade e simulação de integração Git.",
+  "requestFramePermissions": []
+}
