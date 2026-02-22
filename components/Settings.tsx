@@ -44,7 +44,7 @@ interface SystemSettings {
 const DEFAULT_BIO = 'Apaixonado por código limpo e arquitetura de software escalável.';
 
 const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode, densityMode = 'comfortable', setDensityMode, addToast }) => {
-  const { user, isAdmin, updateProfile, updatePassword, logout } = useAuth();
+  const { user, isAdmin, updateProfile, updatePassword } = useAuth();
   const { confirm } = useConfirm();
   const [activeTab, setActiveTab] = useState('profile');
 
