@@ -50,19 +50,36 @@ const ToastItem: React.FC<{ toast: ToastMessage; onRemove: () => void }> = ({ to
     }
   };
 
+  const getToneClasses = () => {
+    switch(toast.type) {
+      case 'success':
+        return 'bg-emerald-50/95 text-emerald-900 dark:bg-emerald-500/[0.08] dark:text-emerald-100';
+      case 'error':
+        return 'bg-red-50/95 text-red-950 dark:bg-red-500/[0.08] dark:text-red-100';
+      default:
+        return 'bg-sky-50/95 text-sky-950 dark:bg-sky-500/[0.08] dark:text-sky-100';
+    }
+  };
+
   return (
     <div 
+        role="status"
+        aria-live="polite"
         className={`
-            bg-white dark:bg-slate-800/70 border-l-4 ${getBorderColor()} rounded-r-md shadow-lg p-4 w-80 pointer-events-auto flex items-start gap-3 transition-all duration-300 transform
+            surface-card border-l-4 ${getBorderColor()} ${getToneClasses()} w-80 rounded-2xl p-4 pointer-events-auto flex items-start gap-3 transition-all duration-300 transform
             ${isVisible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}
         `}
     >
         <div className="mt-0.5">{getIcon()}</div>
         <div className="flex-1">
-            <h4 className="text-sm font-semibold text-slate-800 dark:text-white">{toast.title}</h4>
-            {toast.description && <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{toast.description}</p>}
+            <h4 className="text-sm font-semibold">{toast.title}</h4>
+            {toast.description && <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{toast.description}</p>}
         </div>
-        <button onClick={() => { setIsVisible(false); setTimeout(onRemove, 300); }} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+        <button
+            onClick={() => { setIsVisible(false); setTimeout(onRemove, 300); }}
+            className="rounded-full p-1 text-slate-500 transition-colors hover:bg-black/5 hover:text-slate-700 focus:outline-none focus-visible:ring-4 focus-visible:ring-sky-400/25 dark:text-slate-300 dark:hover:bg-white/[0.08] dark:hover:text-white"
+            aria-label="Fechar notificação"
+        >
             <X className="w-4 h-4" />
         </button>
     </div>

@@ -30,5 +30,7 @@ dist-ssr
 *.sqlite3
 .env
 
-# Docs
-docs/
+# Local QA fixtures and workspace notes
+.qa-fixtures/
+docs/skill-clickup-mcp.md
+docs/ux-css-skill.md

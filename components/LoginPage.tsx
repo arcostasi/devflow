@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../services/api';
-import { FolderGit2, Mail, Lock, User, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { Mail, Lock, User, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import DevFlowLogo from './DevFlowLogo';
 
 interface LoginPageProps {
     onLoginSuccess: () => void;
@@ -57,32 +58,61 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
-            <div className="w-full max-w-md">
-                {/* Logo */}
-                <div className="text-center mb-8">
-                    <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-600 rounded-2xl mb-4 shadow-lg shadow-blue-600/30">
-                        <FolderGit2 className="w-8 h-8 text-white" />
+        <div className="app-auth-shell flex items-center justify-center p-4">
+            <div className="relative grid w-full max-w-5xl gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
+                <section className="hidden lg:block">
+                    <div className="max-w-xl">
+                        <div className="inline-flex items-center gap-3 rounded-full border border-slate-200/80 bg-white/75 px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-slate-600 shadow-sm dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:shadow-none">
+                            <div className="app-brand-badge app-brand-badge-sm">
+                                <DevFlowLogo className="h-5 w-5" />
+                            </div>
+                            DevFlow Workspace
+                        </div>
+                        <h1 className="mt-6 text-5xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
+                            Operação de produto, código e entrega no mesmo fluxo.
+                        </h1>
+                        <p className="mt-5 max-w-lg text-base leading-7 text-slate-600 dark:text-slate-300">
+                            Acesse backlog, sprint, repositórios, deploy e governança com o mesmo dark mode operacional validado nas telas principais.
+                        </p>
+                        <div className="mt-8 grid gap-3 sm:grid-cols-3">
+                            <div className="surface-muted rounded-2xl p-4">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-400">Planejamento</p>
+                                <p className="mt-2 text-sm text-slate-700 dark:text-slate-200">Backlog e sprint com leitura rápida de capacidade.</p>
+                            </div>
+                            <div className="surface-muted rounded-2xl p-4">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-400">Execução</p>
+                                <p className="mt-2 text-sm text-slate-700 dark:text-slate-200">Kanban, revisão e integração Git no mesmo contexto.</p>
+                            </div>
+                            <div className="surface-muted rounded-2xl p-4">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-400">Entrega</p>
+                                <p className="mt-2 text-sm text-slate-700 dark:text-slate-200">Ambientes e governança com foco em risco e promoção.</p>
+                            </div>
+                        </div>
                     </div>
-                    <h1 className="text-3xl font-bold text-white">DevFlow</h1>
-                    <p className="text-slate-400 mt-2">Gerenciamento de Projetos XP</p>
-                </div>
+                </section>
 
-                {/* Card */}
-                <div className="bg-slate-800/50 backdrop-blur-xl rounded-2xl border border-slate-700/50 p-8 shadow-2xl">
-                    <h2 className="text-xl font-semibold text-white mb-6">
-                        {isRegister ? 'Criar Conta' : 'Entrar'}
-                    </h2>
+                <div className="app-auth-panel rounded-[1.75rem] p-6 sm:p-8">
+                    <div className="mb-8 text-center lg:text-left">
+                        <div className="app-brand-badge app-brand-badge-lg mx-auto lg:mx-0">
+                            <DevFlowLogo className="h-8 w-8" />
+                        </div>
+                        <h2 className="mt-5 text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">
+                            {isRegister ? 'Criar Conta' : 'Entrar'}
+                        </h2>
+                        <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+                            {isRegister ? 'Solicite acesso ao workspace com credenciais iniciais.' : 'Continue para o workspace de gerenciamento de projetos.'}
+                        </p>
+                    </div>
 
                     {error && (
-                        <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg mb-4">
+                        <div className="app-notice app-notice-error mb-4">
                             <AlertCircle className="w-5 h-5 flex-shrink-0" />
                             <span className="text-sm">{error}</span>
                         </div>
                     )}
 
                     {success && (
-                        <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/30 text-green-400 px-4 py-3 rounded-lg mb-4">
+                        <div className="app-notice app-notice-success mb-4">
                             <CheckCircle className="w-5 h-5 flex-shrink-0" />
                             <span className="text-sm">{success}</span>
                         </div>
@@ -91,14 +121,15 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                     <form onSubmit={handleSubmit} className="space-y-4">
                         {isRegister && (
                             <div>
-                                <label className="block text-sm font-medium text-slate-300 mb-2">Nome</label>
+                                <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200">Nome</label>
                                 <div className="relative">
                                     <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                                     <input
                                         type="text"
                                         value={name}
                                         onChange={e => setName(e.target.value)}
-                                        className="w-full bg-slate-700/50 border border-slate-600 rounded-lg pl-10 pr-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                        autoComplete="name"
+                                        className="app-input w-full rounded-xl py-3 pl-10 pr-4"
                                         placeholder="Seu nome"
                                         required
                                     />
@@ -107,14 +138,15 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                         )}
 
                         <div>
-                            <label className="block text-sm font-medium text-slate-300 mb-2">Email</label>
+                            <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200">Email</label>
                             <div className="relative">
                                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                                 <input
                                     type="email"
                                     value={email}
                                     onChange={e => setEmail(e.target.value)}
-                                    className="w-full bg-slate-700/50 border border-slate-600 rounded-lg pl-10 pr-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                    autoComplete="email"
+                                    className="app-input w-full rounded-xl py-3 pl-10 pr-4"
                                     placeholder="seu@email.com"
                                     required
                                 />
@@ -122,14 +154,15 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-slate-300 mb-2">Senha</label>
+                            <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200">Senha</label>
                             <div className="relative">
                                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                                 <input
                                     type="password"
                                     value={password}
                                     onChange={e => setPassword(e.target.value)}
-                                    className="w-full bg-slate-700/50 border border-slate-600 rounded-lg pl-10 pr-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                    autoComplete={isRegister ? 'new-password' : 'current-password'}
+                                    className="app-input w-full rounded-xl py-3 pl-10 pr-4"
                                     placeholder="••••••••"
                                     required
                                 />
@@ -139,7 +172,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                         <button
                             type="submit"
                             disabled={isLoading}
-                            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white font-medium py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
+                            className="app-button-primary w-full disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none"
                         >
                             {isLoading ? (
                                 <>
@@ -161,7 +194,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                                     setError('');
                                     setSuccess('');
                                 }}
-                                className="text-blue-400 hover:text-blue-300 text-sm transition-colors"
+                                className="text-sm font-medium text-sky-600 transition-colors hover:text-sky-700 dark:text-sky-300 dark:hover:text-sky-200"
                             >
                                 {isRegister ? 'Já tem conta? Entrar' : 'Não tem conta? Criar uma'}
                             </button>
@@ -169,9 +202,8 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                     )}
                 </div>
 
-                {/* Default credentials hint */}
-                <div className="mt-6 text-center text-slate-500 text-sm">
-                    <p>Credenciais padrão: <span className="text-slate-400">admin@devflow.local</span> / <span className="text-slate-400">admin123</span></p>
+                <div className="text-center text-sm text-slate-500 dark:text-slate-400 lg:absolute lg:bottom-0 lg:right-0 lg:text-right">
+                    <p>Credenciais padrão: <span className="font-medium text-slate-700 dark:text-slate-300">admin@devflow.local</span> / <span className="font-medium text-slate-700 dark:text-slate-300">admin123</span></p>
                 </div>
             </div>
         </div>

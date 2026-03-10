@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, Kanban, GitBranch, Settings, Database, FolderGit2, ListTodo, PanelLeftClose, PanelLeft, Cloud } from 'lucide-react';
+import { LayoutDashboard, Kanban, GitBranch, Settings, Database, ListTodo, PanelLeftClose, PanelLeft, Cloud } from 'lucide-react';
 import { ViewState } from '../types';
+import DevFlowLogo from './DevFlowLogo';
 
 interface SidebarProps {
   currentView: ViewState;
@@ -11,7 +12,7 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ currentView, setView }) => {
   // Estado de colapso - persiste no localStorage
   const [isCollapsed, setIsCollapsed] = useState(() => {
-    if (typeof window !== 'undefined') {
+    if (globalThis.window !== undefined) {
       return localStorage.getItem('sidebar-collapsed') === 'true';
     }
     return false;
@@ -21,86 +22,115 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, setView }) => {
     localStorage.setItem('sidebar-collapsed', String(isCollapsed));
   }, [isCollapsed]);
 
-  const menuItems = [
-    { id: ViewState.DASHBOARD, label: 'Visão Geral', icon: LayoutDashboard },
-    // Planejamento
-    { id: ViewState.BACKLOG, label: 'Backlog', icon: ListTodo },
-    { id: ViewState.KANBAN, label: 'Sprint Ativa', icon: Kanban },
-    // Desenvolvimento
-    { id: ViewState.REPOS, label: 'Repositórios', icon: Database },
-    { id: ViewState.GIT, label: 'Controle de Fonte', icon: GitBranch },
-    // Entrega
-    { id: ViewState.ENVIRONMENTS, label: 'Ambientes', icon: Cloud },
-    // Sistema
-    { id: ViewState.SETTINGS, label: 'Configurações', icon: Settings },
+  const menuSections = [
+    {
+      label: 'Visão',
+      items: [
+        { id: ViewState.DASHBOARD, label: 'Visão Geral', icon: LayoutDashboard },
+      ],
+    },
+    {
+      label: 'Planejamento',
+      items: [
+        { id: ViewState.BACKLOG, label: 'Backlog', icon: ListTodo },
+        { id: ViewState.KANBAN, label: 'Sprint Ativa', icon: Kanban },
+      ],
+    },
+    {
+      label: 'Execução',
+      items: [
+        { id: ViewState.REPOS, label: 'Repositórios', icon: Database },
+        { id: ViewState.GIT, label: 'Controle de Fonte', icon: GitBranch },
+        { id: ViewState.ENVIRONMENTS, label: 'Ambientes', icon: Cloud },
+      ],
+    },
+    {
+      label: 'Sistema',
+      items: [
+        { id: ViewState.SETTINGS, label: 'Configurações', icon: Settings },
+      ],
+    },
   ];
 
   return (
-    <aside className={`${isCollapsed ? 'w-16' : 'w-64'} flex flex-col h-screen bg-slate-100 dark:bg-slate-900 transition-all duration-300 z-20`}>
+    <aside className={`${isCollapsed ? 'w-[5.25rem]' : 'w-[17rem]'} app-sidebar-shell flex flex-col h-full rounded-[1.6rem] transition-all duration-300 z-20 overflow-hidden`}>
       {/* Logo */}
       <button
         onClick={() => setView(ViewState.DASHBOARD)}
-        className={`h-16 flex items-center ${isCollapsed ? 'justify-center' : 'px-6'} w-full cursor-pointer`}
+        className={`h-[4.75rem] flex items-center ${isCollapsed ? 'justify-center px-3' : 'px-6'} w-full cursor-pointer border-b border-slate-200/60 dark:border-[var(--border-soft)]`}
         title="Visão Geral"
       >
-        <FolderGit2 className="w-8 h-8 text-fiori-blue dark:text-fiori-blueDark flex-shrink-0" />
+        <div className="app-brand-badge app-brand-badge-sm">
+          <DevFlowLogo className="w-7 h-7 flex-shrink-0" />
+        </div>
         {!isCollapsed && (
-          <span className="ml-3 font-bold text-lg tracking-tight text-fiori-textPrimary dark:text-white">DevFlow</span>
+          <div className="ml-3 text-left">
+            <span className="block font-bold text-lg tracking-tight text-slate-700 dark:text-[var(--text-primary)]">DevFlow</span>
+            <span className="mt-0.5 inline-flex items-center gap-2 rounded-full border border-slate-200/70 bg-slate-50/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500 shadow-sm shadow-slate-200/40 dark:border-white/10 dark:bg-white/[0.04] dark:text-[var(--text-muted)] dark:shadow-none">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.38)] dark:shadow-[0_0_8px_rgba(34,211,238,0.7)]" aria-hidden="true" />
+              Workspace
+            </span>
+          </div>
         )}
       </button>
 
       {/* Menu Items */}
-      <nav className="flex-1 py-6 space-y-1">
-        {menuItems.map((item) => {
-          const isActive = currentView === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => setView(item.id)}
-              title={isCollapsed ? item.label : undefined}
-              className={`w-full flex items-center ${isCollapsed ? 'justify-center px-3' : 'px-6'} py-3 transition-colors duration-200 group relative
-                ${isActive
-                  ? 'bg-primary-50 dark:bg-slate-800/70 border-r-[3px] border-primary-500 dark:border-primary-400'
-                  : 'hover:bg-slate-100 dark:hover:bg-slate-800/60'
-                }`}
-            >
-              <item.icon className={`w-5 h-5 flex-shrink-0 ${isActive ? 'text-fiori-blue dark:text-fiori-blueDark' : 'text-slate-500 dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-200'}`} />
-              {!isCollapsed && (
-                <span className={`ml-4 text-sm font-medium truncate ${isActive ? 'text-fiori-blue dark:text-fiori-blueDark font-semibold' : 'text-slate-600 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-slate-200'}`}>
-                  {item.label}
-                </span>
-              )}
-            </button>
-          );
-        })}
+      <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-4">
+        {menuSections.map((section) => (
+          <div key={section.label} className="space-y-1.5">
+            {!isCollapsed && (
+              <p className="app-sidebar-section-label">
+                {section.label}
+              </p>
+            )}
+            {section.items.map((item) => {
+              const isActive = currentView === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setView(item.id)}
+                  title={isCollapsed ? item.label : undefined}
+                  className={`app-nav-item w-full ${isCollapsed ? 'justify-center px-3' : 'px-4'} ${isActive ? 'app-nav-item-active' : ''} group`}
+                >
+                  <item.icon className={`w-5 h-5 flex-shrink-0 ${isActive ? 'text-slate-700 dark:text-[var(--text-primary)]' : 'text-slate-500 dark:text-[var(--text-muted)] group-hover:text-slate-700 dark:group-hover:text-[var(--text-primary)]'}`} />
+                  {!isCollapsed && (
+                    <span className={`ml-3 text-sm truncate ${isActive ? 'font-semibold text-slate-800 dark:text-[var(--text-primary)]' : 'text-slate-600 dark:text-[var(--text-secondary)] group-hover:text-slate-800 dark:group-hover:text-[var(--text-primary)]'}`}>
+                      {item.label}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </nav>
 
       {/* Status da Equipe (só visível quando expandido) */}
       {!isCollapsed && (
-        <div className="p-4 border-t border-slate-200 dark:border-slate-800">
-          <div className="bg-slate-50 dark:bg-slate-800/70 rounded-lg p-3 text-xs text-slate-500 dark:text-slate-400 border border-slate-100 dark:border-slate-600/30">
-            <p className="font-semibold mb-1 text-slate-700 dark:text-slate-300">Status da Equipe</p>
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]"></span>
-              Online (1)
+        <div className="p-3 border-t border-slate-200/60 dark:border-[var(--border-soft)]">
+          <div className="rounded-2xl border border-slate-200/70 bg-slate-50/80 p-3 text-xs text-slate-500 shadow-sm shadow-slate-200/40 dark:border-[var(--border-soft)] dark:bg-white/[0.03] dark:text-[var(--text-muted)] dark:shadow-none">
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400 dark:text-[var(--text-muted)]">Status da Equipe</p>
+            <div className="flex items-center gap-2 text-slate-700 dark:text-[var(--text-secondary)]">
+              <span className="inline-block w-2 h-2 rounded-full bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.32)] dark:shadow-[0_0_5px_rgba(34,197,94,0.5)]" aria-hidden="true" />
+              <span>Online (1)</span>
             </div>
           </div>
         </div>
       )}
 
       {/* Botão Recolher/Expandir Menu */}
-      <div className="border-t border-slate-200 dark:border-slate-800">
+      <div className="border-t border-slate-200/60 dark:border-[var(--border-soft)]">
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'px-6'} py-4 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group`}
+          className={`app-nav-item w-full rounded-none border-0 ${isCollapsed ? 'justify-center px-3' : 'px-4'} py-3 text-slate-500 dark:text-[var(--text-muted)] group`}
           title={isCollapsed ? 'Expandir menu' : 'Recolher menu'}
         >
           {isCollapsed ? (
-            <PanelLeft className="w-5 h-5 group-hover:text-fiori-blue transition-colors" />
+            <PanelLeft className="w-5 h-5 group-hover:text-slate-700 dark:group-hover:text-[var(--text-primary)] transition-colors" />
           ) : (
             <>
-              <PanelLeftClose className="w-5 h-5 group-hover:text-fiori-blue transition-colors" />
-              <span className="ml-4 text-sm font-medium group-hover:text-slate-700 dark:group-hover:text-slate-200">Recolher menu</span>
+              <PanelLeftClose className="w-5 h-5 group-hover:text-slate-700 dark:group-hover:text-[var(--text-primary)] transition-colors" />
+              <span className="ml-4 text-sm font-medium group-hover:text-slate-700 dark:group-hover:text-[var(--text-primary)]">Recolher menu</span>
             </>
           )}
         </button>

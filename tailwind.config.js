@@ -27,42 +27,42 @@ export default {
                     800: '#075985',
                     900: '#0c4a6e',
                 },
-                // Slate (SAP Quartz Dark inspired warm palette)
+                // Slate remapped to a more neutral gray scale for dark mode
                 slate: {
-                    50:  '#f8f9fa',
-                    100: '#eceef1',
-                    200: '#d1d8de',
-                    300: '#a9b4be',
-                    400: '#8696a7',
-                    500: '#6a7d8e',
-                    600: '#475e75',
-                    700: '#354a5f',
-                    800: '#29313a',
-                    900: '#1d2228',
-                    950: '#12171c',
+                    50: '#fafafa',
+                    100: '#f4f4f5',
+                    200: '#e4e4e7',
+                    300: '#d4d4d8',
+                    400: '#a1a1aa',
+                    500: '#71717a',
+                    600: '#52525b',
+                    700: '#3f3f46',
+                    800: '#27272a',
+                    900: '#18181b',
+                    950: '#09090b',
                 },
                 // Semantic colors (backward compatibility)
                 fiori: {
                     // Primary Actions
                     blue: '#0ea5e9',        // Primary Action (Light Mode)
-                    blueDark: '#6cb4ee',    // Primary Action (Dark Mode) - softer, SAP-like
+                    blueDark: '#38bdf8',    // Primary Action (Dark Mode)
                     darkBlue: '#0c4a6e',    // Deep state
                     link: '#0ea5e9',        // Light mode links
-                    linkDark: '#91c8f6',    // Dark mode links - warm muted blue
+                    linkDark: '#7dd3fc',    // Dark mode links
 
                     // Light Theme Backgrounds (Glassmorphism)
                     bgLight: '#f0f9ff',     // Primary-50 based
                     cardLight: '#ffffff',
 
-                    // Dark Theme Backgrounds (SAP Quartz Dark)
-                    bgDark: '#1d2228',      // Shell background
-                    cardDark: '#29313a',    // Card/surface
+                    // Dark Theme Backgrounds (Granite)
+                    bgDark: '#0d0e10',      // Shell background
+                    cardDark: '#17181b',    // Card/surface
 
                     // Semantic Text
-                    textPrimary: '#0c4a6e',   // Primary-900 for light mode
-                    textSecondary: '#075985', // Primary-800 for light mode
-                    textPrimaryDark: '#f5f6f7',  // SAP Quartz Dark text
-                    textSecondaryDark: '#a9b4be', // Warm muted secondary
+                    textPrimary: '#0f172a',
+                    textSecondary: '#334155',
+                    textPrimaryDark: '#e2e8f0',
+                    textSecondaryDark: '#a1a1aa',
                 }
             }
         }

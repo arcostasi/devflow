@@ -5,27 +5,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DevFlow</title>
+  <meta name="application-name" content="DevFlow Workspace" />
+  <meta name="theme-color" content="#0b1220" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="DevFlow" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="mask-icon" href="/favicon.svg" color="#38bdf8" />
+  <link rel="manifest" href="/site.webmanifest" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    /* Custom scrollbar for Fiori feel */
-    ::-webkit-scrollbar {
-      width: 8px;
-      height: 8px;
-    }
-
-    ::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    ::-webkit-scrollbar-thumb {
-      background: #cbd5e1;
-      border-radius: 4px;
-    }
-
-    .dark ::-webkit-scrollbar-thumb {
-      background: #374151;
-    }
-
     body {
       font-family: 'Inter', sans-serif;
     }
@@ -47,7 +36,7 @@
 </head>
 
 <body
-  class="bg-fiori-bgLight dark:bg-fiori-bgDark text-fiori-textPrimary dark:text-fiori-textPrimaryDark transition-colors duration-200 antialiased selection:bg-fiori-blue selection:text-white">
+  class="font-sans antialiased bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100 dark:from-[#08090b] dark:via-[#111214] dark:to-[#181a1d] text-slate-900 dark:text-slate-100 selection:bg-primary-500/30 selection:text-slate-900 dark:selection:text-white">
   <div id="root"></div>
   <script type="module" src="/index.tsx"></script>
 </body>

@@ -121,62 +121,62 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] px-4">
-      <div className="absolute inset-0 bg-black/20 dark:bg-black/60 backdrop-blur-sm transition-opacity" onClick={() => setIsOpen(false)} />
+      <div className="absolute inset-0 bg-black/35 dark:bg-black/72 backdrop-blur-sm transition-opacity" onClick={() => setIsOpen(false)} />
 
-      <div className="relative w-full max-w-lg bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex items-center px-4 py-3 border-b border-slate-100 dark:border-slate-800">
+      <div className="app-elevated-panel relative w-full max-w-xl overflow-hidden rounded-[1.35rem] animate-in fade-in zoom-in-95 duration-200">
+        <div className="surface-header flex items-center gap-3 px-4 py-3">
           <Search className="w-5 h-5 text-slate-400 mr-3" />
           <input
             type="text"
             placeholder="O que você precisa? (Digite para buscar...)"
-            className="flex-1 bg-transparent border-none outline-none text-slate-800 dark:text-slate-100 placeholder-slate-400 text-sm h-6"
+            className="flex-1 bg-transparent border-none outline-none text-sm h-6 text-slate-800 placeholder-slate-400 dark:text-[var(--text-primary)] dark:placeholder:text-[var(--text-muted)]"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
           />
-          <div className="text-[10px] font-mono text-slate-400 border border-slate-200 dark:border-slate-700 px-1.5 rounded">ESC</div>
+          <div className="app-kbd">ESC</div>
         </div>
 
         <div className="max-h-[300px] overflow-y-auto py-2">
           {filteredItems.length === 0 ? (
-            <div className="px-4 py-8 text-center text-slate-500 text-sm">
+            <div className="px-4 py-8 text-center text-sm text-slate-500 dark:text-[var(--text-muted)]">
               Nenhum resultado encontrado para "{query}"
             </div>
           ) : (
             <>
               {filteredItems.map((item, index) => (
-                <div
+                <button
                   key={item.id}
+                  type="button"
                   onClick={() => { item.action(); setIsOpen(false); }}
-                  className={`px-4 py-3 flex items-center justify-between cursor-pointer transition-colors text-sm border-l-2
+                  className={`mx-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-xl border px-4 py-3 text-left text-sm transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-sky-400/25
                                 ${index === selectedIndex
-                      ? 'bg-fiori-blue/10 dark:bg-fiori-blue/20 border-fiori-blue'
-                      : 'border-transparent text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                      ? 'border-primary-500/35 bg-primary-500/10 text-primary-700 dark:text-primary-200'
+                      : 'border-transparent text-slate-700 hover:bg-slate-50 dark:text-[var(--text-secondary)] dark:hover:bg-white/[0.04]'
                     }`}
                 >
                   <div className="flex items-center gap-3 overflow-hidden">
-                    <item.icon className={`w-4 h-4 ${index === selectedIndex ? 'text-fiori-blue' : 'text-slate-400'}`} />
+                    <item.icon className={`w-4 h-4 ${index === selectedIndex ? 'text-primary-500' : 'text-slate-400 dark:text-[var(--text-muted)]'}`} />
                     <div className="flex flex-col truncate">
-                      <span className={index === selectedIndex ? 'text-fiori-blue font-medium' : ''}>{item.label}</span>
-                      {/* Show extra info for tasks/repos */}
+                      <span className={index === selectedIndex ? 'font-medium text-primary-700 dark:text-primary-200' : ''}>{item.label}</span>
                       {'meta' in item && (
-                        <span className="text-[10px] text-slate-400 font-mono">{(item as any).meta}</span>
+                        <span className="text-[10px] font-mono text-slate-400 dark:text-[var(--text-muted)]">{(item as any).meta}</span>
                       )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     {item.group && (
-                      <span className="text-[10px] text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 rounded uppercase">{item.group}</span>
+                      <span className="rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-[10px] uppercase text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-[var(--text-muted)]">{item.group}</span>
                     )}
-                    {index === selectedIndex && <ArrowRight className="w-4 h-4 text-fiori-blue opacity-50" />}
+                    {index === selectedIndex && <ArrowRight className="w-4 h-4 text-primary-500 opacity-70" />}
                   </div>
-                </div>
+                </button>
               ))}
             </>
           )}
         </div>
 
-        <div className="px-4 py-2 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-400 flex justify-between">
+        <div className="surface-header flex justify-between px-4 py-2 text-[10px] text-slate-400 dark:text-[var(--text-muted)]">
           <span>Use as setas para navegar</span>
           <span>DevFlow Intelligence</span>
         </div>
