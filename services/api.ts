@@ -18,7 +18,7 @@ const handleResponse = async (res: Response, _fallbackMsg: string): Promise<Resp
         const token = localStorage.getItem('devflow_token');
         if (token) {
             localStorage.removeItem('devflow_token');
-            window.location.reload();
+            globalThis.location.reload();
         }
         throw new Error('Sessão expirada. Faça login novamente.');
     }
@@ -254,7 +254,7 @@ export const api = {
         }
     },
 
-    createActivity: async (activity: { id: string; userId: string; action: string; target: string; targetType: string; meta?: string }): Promise<void> => {
+    createActivity: async (activity: { id: string; userId: string; action: string; target: string; targetType: string; taskId?: string; meta?: string }): Promise<void> => {
         const res = await fetch(`${API_URL}/activities`, {
             method: 'POST',
             headers: getAuthHeaders(),
@@ -516,32 +516,81 @@ export const api = {
         if (!res.ok) throw new Error('Falha ao desconectar GitLab');
     },
 
-    connectJira: async (data: { email: string; apiToken: string; domain: string }): Promise<any> => {
-        const res = await fetch(`${API_URL}/integrations/jira`, {
+    connectClickUp: async (data: { apiToken: string; workspaceId: string; listId?: string; mcpAccessToken?: string; mcpWorkspaceId?: string }): Promise<any> => {
+        const res = await fetch(`${API_URL}/integrations/clickup`, {
             method: 'POST',
             headers: getAuthHeaders(),
             body: JSON.stringify(data)
         });
         const result = await res.json();
-        if (!res.ok) throw new Error(result.error || 'Falha ao conectar Jira');
+        if (!res.ok) throw new Error(result.error || 'Falha ao conectar ClickUp');
         return result;
     },
 
-    disconnectJira: async (): Promise<void> => {
-        const res = await fetch(`${API_URL}/integrations/jira`, {
+    disconnectClickUp: async (): Promise<void> => {
+        const res = await fetch(`${API_URL}/integrations/clickup`, {
             method: 'DELETE',
             headers: getAuthHeaders()
         });
-        if (!res.ok) throw new Error('Falha ao desconectar Jira');
+        if (!res.ok) throw new Error('Falha ao desconectar ClickUp');
     },
 
-    syncJira: async (): Promise<any> => {
-        const res = await fetch(`${API_URL}/integrations/jira/sync`, {
+    syncClickUp: async (): Promise<any> => {
+        const res = await fetch(`${API_URL}/integrations/clickup/sync`, {
             method: 'POST',
             headers: getAuthHeaders()
         });
         const result = await res.json();
-        if (!res.ok) throw new Error(result.error || 'Falha ao sincronizar Jira');
+        if (!res.ok) throw new Error(result.error || 'Falha ao sincronizar ClickUp');
+        return result;
+    },
+
+    getClickUpStatus: async (): Promise<any> => {
+        const res = await fetch(`${API_URL}/integrations/clickup/status`, {
+            headers: getAuthHeaders()
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Falha ao obter status do ClickUp');
+        return result;
+    },
+
+    getClickUpTools: async (): Promise<any> => {
+        const res = await fetch(`${API_URL}/integrations/clickup/tools`, {
+            headers: getAuthHeaders()
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Falha ao obter tools do ClickUp MCP');
+        return result;
+    },
+
+    executeClickUpMcpTool: async (data: { toolName: string; arguments?: Record<string, unknown>; dryRun?: boolean }): Promise<any> => {
+        const res = await fetch(`${API_URL}/integrations/clickup/mcp/execute`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify(data),
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Falha ao executar tool do ClickUp MCP');
+        return result;
+    },
+
+    startClickUpMcpOAuth: async (workspaceId?: string): Promise<{ success: boolean; authorizeUrl: string; state: string; expiresAt: string }> => {
+        const res = await fetch(`${API_URL}/integrations/clickup/mcp/oauth/start`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ workspaceId }),
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Falha ao iniciar OAuth do ClickUp MCP');
+        return result;
+    },
+
+    getClickUpMcpAudit: async (limit = 50): Promise<{ success: boolean; items: any[] }> => {
+        const res = await fetch(`${API_URL}/integrations/clickup/mcp/audit?limit=${limit}`, {
+            headers: getAuthHeaders()
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Falha ao obter trilha de auditoria MCP');
         return result;
     },
 

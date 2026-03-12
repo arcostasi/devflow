@@ -21,6 +21,38 @@ const runGitInDir = (args, cwd) => {
     });
 };
 
+const normalizePathForComparison = (targetPath) => {
+    const resolvedPath = path.resolve(targetPath);
+    return process.platform === 'win32' ? resolvedPath.toLowerCase() : resolvedPath;
+};
+
+const isPathInsideRoot = (rootPath, targetPath) => {
+    const normalizedRoot = normalizePathForComparison(rootPath);
+    const normalizedTarget = normalizePathForComparison(targetPath);
+    return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}${path.sep}`);
+};
+
+const taskStatusLabels = {
+    backlog: 'Backlog',
+    todo: 'A Fazer',
+    doing: 'Em Progresso',
+    review: 'Em Revisao',
+    ready: 'Pronto para Release',
+    done: 'Concluido',
+};
+
+const createActivityLog = ({ userId, action, target, targetType, taskId = null, meta = null }) => {
+    db.prepare(`
+        INSERT INTO activities (id, userId, action, target, targetType, taskId, timestamp, meta)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(`a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, userId, action, target, targetType, taskId, new Date().toISOString(), meta);
+};
+
+const summarizeComment = (text) => {
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    return normalized.length > 84 ? `${normalized.slice(0, 81)}...` : normalized;
+};
+
 /* --- GIT ENDPOINTS POR REPOSITÓRIO --- */
 
 // Status Git de um repositório específico
@@ -514,6 +546,7 @@ router.get('/activities', requireAuth, (req, res) => {
             action: act.action,
             target: act.target,
             targetType: act.targetType,
+            taskId: act.taskId || undefined,
             timestamp: act.timestamp,
             meta: act.meta,
             user: {
@@ -690,7 +723,7 @@ router.get('/repos/:id/files', requireAuth, (req, res) => {
         const targetDir = safeSub ? path.join(repo.localPath, safeSub) : repo.localPath;
 
         // Prevent path traversal
-        if (!targetDir.startsWith(repo.localPath)) {
+        if (!isPathInsideRoot(repo.localPath, targetDir)) {
             return res.status(403).json({ error: 'Acesso negado' });
         }
 
@@ -747,7 +780,7 @@ router.get('/repos/:id/file', requireAuth, (req, res) => {
         const fullPath = path.join(repo.localPath, safePath);
 
         // Verificar se o arquivo está dentro do diretório do repositório
-        if (!fullPath.startsWith(repo.localPath)) {
+        if (!isPathInsideRoot(repo.localPath, fullPath)) {
             return res.status(403).json({ error: 'Acesso negado' });
         }
 
@@ -796,7 +829,7 @@ router.put('/repos/:id/file', requireAuth, async (req, res) => {
         const fullPath = path.join(repo.localPath, safePath);
 
         // Verificar se o arquivo está dentro do diretório do repositório
-        if (!fullPath.startsWith(repo.localPath)) {
+        if (!isPathInsideRoot(repo.localPath, fullPath)) {
             return res.status(403).json({ error: 'Acesso negado' });
         }
 
@@ -1046,13 +1079,13 @@ router.delete('/tasks/:id', requireAuth, (req, res) => {
 
 // ACTIVITIES
 router.post('/activities', requireAuth, (req, res) => {
-    const { id, userId, action, target, targetType, meta } = req.body;
+    const { id, userId, action, target, targetType, taskId, meta } = req.body;
     const timestamp = new Date().toISOString();
     try {
         db.prepare(`
-            INSERT INTO activities (id, userId, action, target, targetType, timestamp, meta)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(id || `a-${Date.now()}`, userId, action, target, targetType, timestamp, meta || null);
+            INSERT INTO activities (id, userId, action, target, targetType, taskId, timestamp, meta)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(id || `a-${Date.now()}`, userId, action, target, targetType, taskId || null, timestamp, meta || null);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to log activity', details: err.message });
@@ -1064,6 +1097,13 @@ router.put('/tasks/:id', requireAuth, (req, res) => {
     const updates = req.body;
 
     try {
+        const existingTask = db.prepare(`
+            SELECT id, title, status, linkedBranch, linkedPRUrl, linkedMRIid
+            FROM tasks
+            WHERE id = ?
+        `).get(id);
+        if (!existingTask) return res.status(404).json({ error: 'Tarefa não encontrada' });
+
         const allowed = ['title', 'description', 'status', 'priority', 'assigneeId', 'pairAssigneeId',
             'storyPoints', 'tags', 'sprintId', 'repositoryId', 'timeSpent', 'xpPractices',
             'type', 'acceptanceCriteria', 'dorChecklist', 'dodChecklist', 'dependencies',
@@ -1093,6 +1133,52 @@ router.put('/tasks/:id', requireAuth, (req, res) => {
             for (const st of updates.subtasks) {
                 subtaskStmt.run(st.id || `st-${Date.now()}-${Math.random()}`, id, st.text, st.done ? 1 : 0);
             }
+        }
+
+        const taskTitle = (updates.title ?? existingTask.title ?? 'Tarefa').trim();
+
+        if (updates.status !== undefined && updates.status !== existingTask.status) {
+            createActivityLog({
+                userId: req.user.id,
+                action: `moveu tarefa para ${taskStatusLabels[updates.status] || updates.status}`,
+                target: taskTitle,
+                targetType: 'issue',
+                taskId: id,
+                meta: `${taskStatusLabels[existingTask.status] || existingTask.status} -> ${taskStatusLabels[updates.status] || updates.status}`,
+            });
+        }
+
+        if (updates.linkedBranch !== undefined && updates.linkedBranch !== existingTask.linkedBranch && `${updates.linkedBranch}`.trim()) {
+            createActivityLog({
+                userId: req.user.id,
+                action: 'vinculou branch',
+                target: taskTitle,
+                targetType: 'issue',
+                taskId: id,
+                meta: `${updates.linkedBranch}`.trim(),
+            });
+        }
+
+        if (updates.linkedPRUrl !== undefined && updates.linkedPRUrl !== existingTask.linkedPRUrl && `${updates.linkedPRUrl}`.trim()) {
+            createActivityLog({
+                userId: req.user.id,
+                action: 'vinculou pull request',
+                target: taskTitle,
+                targetType: 'issue',
+                taskId: id,
+                meta: `${updates.linkedPRUrl}`.trim(),
+            });
+        }
+
+        if (updates.linkedMRIid !== undefined && updates.linkedMRIid !== existingTask.linkedMRIid && `${updates.linkedMRIid}`.trim()) {
+            createActivityLog({
+                userId: req.user.id,
+                action: 'vinculou merge request',
+                target: taskTitle,
+                targetType: 'issue',
+                taskId: id,
+                meta: `MR !${`${updates.linkedMRIid}`.trim()}`,
+            });
         }
 
         res.json({ message: 'Task updated' });
@@ -1128,13 +1214,22 @@ router.post('/tasks/:id/comments', requireAuth, (req, res) => {
     const { text } = req.body;
     if (!text?.trim()) return res.status(400).json({ error: 'Texto do comentário é obrigatório' });
     try {
-        const task = db.prepare('SELECT id FROM tasks WHERE id = ?').get(id);
+        const task = db.prepare('SELECT id, title FROM tasks WHERE id = ?').get(id);
         if (!task) return res.status(404).json({ error: 'Tarefa não encontrada' });
         const commentId = `c-${Date.now()}`;
         const timestamp = new Date().toISOString();
-        db.prepare('INSERT INTO comments (id, taskId, authorId, text, timestamp) VALUES (?, ?, ?, ?, ?)').run(commentId, id, req.user.id, text.trim(), timestamp);
+        const normalizedText = text.trim();
+        db.prepare('INSERT INTO comments (id, taskId, authorId, text, timestamp) VALUES (?, ?, ?, ?, ?)').run(commentId, id, req.user.id, normalizedText, timestamp);
+        createActivityLog({
+            userId: req.user.id,
+            action: 'comentou na tarefa',
+            target: task.title,
+            targetType: 'issue',
+            taskId: id,
+            meta: summarizeComment(normalizedText),
+        });
         const user = db.prepare('SELECT id, name, avatar FROM users WHERE id = ?').get(req.user.id);
-        res.status(201).json({ id: commentId, text: text.trim(), timestamp, author: user });
+        res.status(201).json({ id: commentId, text: normalizedText, timestamp, author: user });
     } catch (err) {
         res.status(500).json({ error: 'Falha ao criar comentário', details: err.message });
     }

@@ -154,6 +154,7 @@ export interface ActivityLog {
   action: string;
   target: string;
   targetType: 'repo' | 'pr' | 'issue' | 'commit' | 'sprint';
+  taskId?: string;
   timestamp: string;
   meta?: string;
 }

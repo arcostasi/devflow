@@ -121,6 +121,31 @@ const schema = `
     FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS clickup_oauth_states (
+    id TEXT PRIMARY KEY,
+    userId TEXT NOT NULL,
+    state TEXT NOT NULL UNIQUE,
+    codeVerifier TEXT NOT NULL,
+    workspaceId TEXT,
+    createdAt TEXT NOT NULL,
+    expiresAt TEXT NOT NULL,
+    FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS mcp_audit (
+    id TEXT PRIMARY KEY,
+    userId TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    actionType TEXT NOT NULL,
+    toolName TEXT,
+    workspaceId TEXT,
+    requestPayloadRedacted TEXT,
+    responseSummary TEXT,
+    status TEXT NOT NULL,
+    createdAt TEXT NOT NULL,
+    FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
+  );
+
   -- MVP-1: Pipelines table for CI/CD tracking
   CREATE TABLE IF NOT EXISTS pipelines (
     id TEXT PRIMARY KEY,
@@ -197,6 +222,7 @@ const migrations = [
   "ALTER TABLE tasks ADD COLUMN linkedMRIid TEXT",
   "ALTER TABLE repositories ADD COLUMN remoteUrl TEXT",
   "ALTER TABLE repositories ADD COLUMN gitlabProjectPath TEXT",
+  "ALTER TABLE activities ADD COLUMN taskId TEXT",
 ];
 
 for (const sql of migrations) {

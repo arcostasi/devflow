@@ -57,51 +57,70 @@ const NewTaskModal: React.FC<NewTaskModalProps> = ({ isOpen, onClose, onCreate, 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Criar Nova Tarefa" size="lg">
       <form onSubmit={handleSubmit} className="space-y-6">
-
-        {/* Title */}
-        <div className="space-y-1.5">
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Título da Tarefa <span className="text-red-500">*</span></label>
-          <input
-            type="text"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            placeholder="Informe um título breve e descritivo"
-            className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-md focus:ring-2 focus:ring-fiori-blue focus:outline-none dark:text-white"
-            autoFocus
-          />
+        <div className="surface-muted rounded-2xl p-4 sm:p-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
+                Planejamento operacional
+              </p>
+              <h4 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                Registre contexto, responsável e vínculo técnico em uma única etapa.
+              </h4>
+            </div>
+            <span className="inline-flex w-fit items-center rounded-full border border-sky-500/20 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-700 dark:text-sky-300">
+              Status inicial: {status === 'backlog' ? 'Backlog' : status === 'todo' ? 'A Fazer' : status === 'doing' ? 'Em andamento' : status === 'review' ? 'Em revisão' : status === 'ready' ? 'Pronta' : 'Concluída'}
+            </span>
+          </div>
         </div>
 
-        {/* Description */}
-        <div className="space-y-1.5">
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Descrição</label>
-          <textarea
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            rows={4}
-            placeholder="Detalhes da tarefa (suporta Markdown)..."
-            className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-md focus:ring-2 focus:ring-fiori-blue focus:outline-none dark:text-white resize-none font-mono text-sm"
-          />
+        <div className="surface-muted rounded-2xl p-5 space-y-5">
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Título da Tarefa <span className="text-red-500">*</span></label>
+            <input
+              type="text"
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              placeholder="Informe um título breve e descritivo"
+              className="app-input w-full rounded-xl px-4 py-3"
+              autoFocus
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Descrição</label>
+            <textarea
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              rows={4}
+              placeholder="Descreva o problema, objetivo, critérios de entrega ou dependências."
+              className="app-input w-full rounded-xl px-4 py-3 resize-none font-mono text-sm"
+            />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Priority & Status */}
-          <div className="space-y-4">
+          <div className="surface-muted rounded-2xl p-5 space-y-4">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Criticidade</p>
+              <h5 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Prioridade e contexto técnico</h5>
+            </div>
             <div className="space-y-1.5">
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Prioridade</label>
-              <div className="flex gap-2">
+              <div className="app-segmented">
                 {(['low', 'medium', 'high'] as Priority[]).map(p => (
                   <button
                     key={p}
                     type="button"
                     onClick={() => setPriority(p)}
-                    className={`flex-1 py-2 px-3 rounded-md text-sm border transition-all capitalize
-                              ${priority === p
-                        ? (p === 'high' ? 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/30 dark:border-red-800 dark:text-red-300' :
-                          p === 'medium' ? 'bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-900/30 dark:border-amber-800 dark:text-amber-300' :
-                            'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-800 dark:text-blue-300')
-                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
-                      }
-                            `}
+                    className={`app-segmented-option capitalize ${priority === p ? 'app-segmented-option-active' : ''} ${
+                      priority === p && p === 'high'
+                        ? 'text-red-700 dark:text-red-300'
+                        : priority === p && p === 'medium'
+                          ? 'text-amber-700 dark:text-amber-300'
+                          : priority === p && p === 'low'
+                            ? 'text-sky-700 dark:text-sky-300'
+                            : ''
+                    }`}
                   >
                     {p === 'low' ? 'Baixa' : p === 'medium' ? 'Média' : 'Alta'}
                   </button>
@@ -116,7 +135,7 @@ const NewTaskModal: React.FC<NewTaskModalProps> = ({ isOpen, onClose, onCreate, 
                 <select
                   value={repoId}
                   onChange={e => setRepoId(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-md focus:ring-2 focus:ring-fiori-blue focus:outline-none dark:text-white appearance-none"
+                  className="app-input w-full appearance-none rounded-xl py-2.5 pl-9 pr-3"
                 >
                   <option value="">Sem repositório</option>
                   {repos.map(repo => (
@@ -124,26 +143,45 @@ const NewTaskModal: React.FC<NewTaskModalProps> = ({ isOpen, onClose, onCreate, 
                   ))}
                 </select>
               </div>
+              {repos.length === 0 && (
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Nenhum repositório disponível. A tarefa será criada sem vínculo técnico.
+                </p>
+              )}
             </div>
           </div>
 
-          {/* Assignee & Tags */}
-          <div className="space-y-4">
+          <div className="surface-muted rounded-2xl p-5 space-y-4">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Responsabilidade</p>
+              <h5 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Distribuição e classificação</h5>
+            </div>
             <div className="space-y-1.5">
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Responsável</label>
-              <div className="grid grid-cols-4 gap-2">
-                {users.map(member => (
-                  <button
-                    key={member.id}
-                    type="button"
-                    onClick={() => setAssigneeId(member.id === assigneeId ? '' : member.id)}
-                    className={`p-1 rounded-full border-2 transition-all flex justify-center ${assigneeId === member.id ? 'border-fiori-blue scale-110' : 'border-transparent hover:border-slate-200 dark:hover:border-slate-700'}`}
-                    title={member.name}
-                  >
-                    <Avatar name={member.name} size="md" />
-                  </button>
-                ))}
-              </div>
+              {users.length === 0 ? (
+                <div className="app-empty-state">
+                  <strong className="text-sm">Nenhum colaborador disponível</strong>
+                  <p className="text-sm">Crie a tarefa agora e atribua o responsável depois.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-4 gap-2">
+                  {users.map(member => (
+                    <button
+                      key={member.id}
+                      type="button"
+                      onClick={() => setAssigneeId(member.id === assigneeId ? '' : member.id)}
+                      className={`flex justify-center rounded-2xl border p-2 transition-all ${
+                        assigneeId === member.id
+                          ? 'border-sky-500/40 bg-sky-500/10 shadow-sm'
+                          : 'border-transparent hover:border-slate-200 hover:bg-white/70 dark:hover:border-white/10 dark:hover:bg-white/[0.03]'
+                      }`}
+                      title={member.name}
+                    >
+                      <Avatar name={member.name} size="md" />
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -155,30 +193,29 @@ const NewTaskModal: React.FC<NewTaskModalProps> = ({ isOpen, onClose, onCreate, 
                   value={tagsInput}
                   onChange={e => setTagsInput(e.target.value)}
                   placeholder="Frontend, Bugfix, V1..."
-                  className="w-full pl-9 pr-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-md focus:ring-2 focus:ring-fiori-blue focus:outline-none dark:text-white"
+                  className="app-input w-full rounded-xl py-2.5 pl-9 pr-3"
                 />
               </div>
             </div>
           </div>
         </div>
 
-        <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-3">
+        <div className="flex justify-end gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors"
+            className="app-button-secondary"
           >
             Cancelar
           </button>
           <button
             type="submit"
             disabled={!title.trim()}
-            className="px-6 py-2 text-sm font-medium text-white bg-fiori-blue hover:bg-blue-700 rounded-md shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="app-button-primary px-6 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
           >
             Criar Tarefa
           </button>
         </div>
-
       </form>
     </Modal>
   );

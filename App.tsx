@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './components/Dashboard';
@@ -35,6 +35,7 @@ const AppContent: React.FC = () => {
   const [newTaskInitialStatus, setNewTaskInitialStatus] = useState<TaskStatus>('todo');
   const [isNewRepoModalOpen, setIsNewRepoModalOpen] = useState(false);
   const [selectedRepoId, setSelectedRepoId] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [activities, setActivities] = useState<ActivityLog[]>(initialActivities);
 
@@ -45,6 +46,10 @@ const AppContent: React.FC = () => {
   const [activeSprint, setActiveSprint] = useState<Sprint | null>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [dashboardStats, setDashboardStats] = useState<any>(null);
+  const activeUsers = useMemo(
+    () => users.filter((currentUser: any) => currentUser.status !== 'pending' && currentUser.status !== 'inactive'),
+    [users]
+  );
 
   // Initial Data Fetch
   useEffect(() => {
@@ -85,7 +90,7 @@ const AppContent: React.FC = () => {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  const handleLogActivity = (action: string, target: string, targetType: ActivityLog['targetType'], meta?: string) => {
+  const handleLogActivity = (action: string, target: string, targetType: ActivityLog['targetType'], options?: { taskId?: string; meta?: string }) => {
     const id = `a-${Date.now()}`;
     const newLog: ActivityLog = {
       id,
@@ -93,26 +98,24 @@ const AppContent: React.FC = () => {
       action,
       target,
       targetType,
+      taskId: options?.taskId,
       timestamp: 'agora',
-      meta
+      meta: options?.meta
     };
     setActivities(prev => [newLog, ...prev]);
     // Persist to DB (fire-and-forget)
     if (user?.id) {
-      api.createActivity({ id, userId: user.id, action, target, targetType, meta }).catch(() => {});
+      api.createActivity({ id, userId: user.id, action, target, targetType, taskId: options?.taskId, meta: options?.meta }).catch(() => {});
     }
   };
 
   // Theme Logic
   useEffect(() => {
     const root = document.documentElement;
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const mediaQuery = globalThis.matchMedia('(prefers-color-scheme: dark)');
 
     const applyTheme = () => {
-      let isDark = false;
-      if (themeMode === 'dark') isDark = true;
-      else if (themeMode === 'light') isDark = false;
-      else if (themeMode === 'system') isDark = mediaQuery.matches;
+      const isDark = themeMode === 'dark' || (themeMode === 'system' && mediaQuery.matches);
 
       setIsEffectiveDark(isDark);
       if (isDark) root.classList.add('dark');
@@ -161,7 +164,8 @@ const AppContent: React.FC = () => {
       await api.deleteRepo(id);
       setRepos(prev => prev.filter(r => r.id !== id));
       addToast('Repositório Removido', 'info', 'O registro foi removido do sistema.');
-    } catch (_e) {
+    } catch (error) {
+      console.error('Failed to remove repository', error);
       addToast('Falha ao Remover', 'error', 'Não foi possível remover o repositório.');
     }
   };
@@ -183,19 +187,19 @@ const AppContent: React.FC = () => {
     setTasks(prev => [newTask, ...prev]);
     try {
       await api.createTask(newTask);
-      handleLogActivity('criou tarefa', newTask.title, 'issue');
+      handleLogActivity('criou tarefa', newTask.title, 'issue', { taskId: newTask.id });
       addToast('Tarefa Criada', 'success', `"${newTask.title}" adicionada ao quadro.`);
-    } catch (_e) {
+    } catch (error) {
+      console.error('Failed to create task', error);
       // Rollback on failure
       setTasks(prev => prev.filter(t => t.id !== newTask.id));
       addToast('Falha ao Criar Tarefa', 'error', 'Não foi possível salvar a tarefa. Tente novamente.');
     }
   };
 
-  const handleOpenTask = (_task: Task) => {
+  const handleOpenTask = (task: Task) => {
+    setSelectedTaskId(task.id);
     setCurrentView(ViewState.KANBAN);
-    // Aqui poderíamos setar um estado global 'selectedTaskId' se quiséssemos abrir o drawer automaticamente
-    // Por enquanto apenas navegamos
   };
 
   const handleOpenRepo = (id: string) => {
@@ -215,6 +219,7 @@ const AppContent: React.FC = () => {
             onCreateTask={() => openNewTaskModal('todo')}
             onCreateRepo={() => setIsNewRepoModalOpen(true)}
             onOpenRepo={handleOpenRepo}
+            onOpenTask={handleOpenTask}
             stats={dashboardStats}
           />
         );
@@ -226,8 +231,10 @@ const AppContent: React.FC = () => {
             addToast={addToast}
             openNewTaskModal={openNewTaskModal}
             activeSprint={activeSprint}
-            teamMembers={users}
+            teamMembers={activeUsers}
             repositories={repos}
+            selectedTaskId={selectedTaskId}
+            onSelectedTaskIdHandled={() => setSelectedTaskId(null)}
           />
         );
       case ViewState.BACKLOG:
@@ -316,7 +323,7 @@ const AppContent: React.FC = () => {
   // Show loading spinner while checking auth
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
         <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
       </div>
     );
@@ -324,11 +331,11 @@ const AppContent: React.FC = () => {
 
   // Show login if not authenticated
   if (!isAuthenticated) {
-    return <LoginPage onLoginSuccess={() => window.location.reload()} />;
+    return <LoginPage onLoginSuccess={() => globalThis.location.reload()} />;
   }
 
   return (
-    <div className="flex h-screen bg-slate-100 dark:bg-slate-900 overflow-hidden">
+    <div className="app-shell-bg flex h-screen overflow-hidden p-2 gap-2 font-sans antialiased">
       <CommandPalette
         isOpen={isCmdOpen}
         setIsOpen={setIsCmdOpen}
@@ -346,7 +353,7 @@ const AppContent: React.FC = () => {
         onCreate={handleCreateTask}
         initialStatus={newTaskInitialStatus}
         repos={repos}
-        users={users}
+        users={activeUsers}
       />
 
       <ManageSprintsModal
@@ -367,7 +374,7 @@ const AppContent: React.FC = () => {
 
       <Sidebar currentView={currentView} setView={setCurrentView} />
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="app-workspace-shell flex-1 flex flex-col min-w-0 rounded-[1.6rem] overflow-hidden">
         <Header
           isDark={isEffectiveDark}
           toggleTheme={toggleTheme}
@@ -376,8 +383,7 @@ const AppContent: React.FC = () => {
           onOpenNewTask={() => openNewTaskModal('todo')}
         />
 
-        {/* Área de conteúdo com curvas internas */}
-        <main className="flex-1 overflow-y-auto bg-white dark:bg-slate-800 rounded-tl-2xl shadow-sm border-l border-t border-slate-200 dark:border-slate-700/30">
+        <main className="app-workspace-body flex-1 overflow-y-auto">
           {renderView()}
         </main>
       </div>
