@@ -37,7 +37,71 @@ SyntaxHighlighter.registerLanguage('md', markdown);
 
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS_RE = /[\x00-\x1F\x7F]/g;
-const cleanFileName = (name: string): string => name.replace(CONTROL_CHARS_RE, '').trim();
+const cleanFileName = (name: string): string => name.replaceAll(CONTROL_CHARS_RE, '').trim();
+type DiffLine = { type: 'add' | 'del' | 'normal'; content: string };
+
+const getNodeText = (children: React.ReactNode): string => {
+    if (typeof children === 'string') return children;
+    if (typeof children === 'number') return String(children);
+    if (Array.isArray(children)) {
+        return children
+            .map((child) => (typeof child === 'string' || typeof child === 'number' ? String(child) : ''))
+            .join('');
+    }
+    return '';
+};
+
+const getRepoTreeLanguage = (filename: string): 'tsx' | 'ts' | 'js' | 'text' => {
+    if (filename.endsWith('.tsx')) return 'tsx';
+    if (filename.endsWith('.ts')) return 'ts';
+    if (filename.endsWith('.js')) return 'js';
+    return 'text';
+};
+
+const getHealthScoreColorClass = (healthScore: number): string => {
+    if (healthScore >= 80) return 'text-emerald-500';
+    if (healthScore >= 50) return 'text-amber-500';
+    return 'text-rose-500';
+};
+
+const getChangeStatusClass = (status: GitChange['status']): string => {
+    if (status === 'added') return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400';
+    if (status === 'deleted') return 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400';
+    return 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400';
+};
+
+const getChangeStatusLabel = (status: GitChange['status']): string => {
+    if (status === 'added') return 'Novo';
+    if (status === 'deleted') return 'Removido';
+    return 'Modificado';
+};
+
+const renderMarkdownCodeNode = (isDark: boolean, inline: boolean, className: string | undefined, children: React.ReactNode, props: Record<string, unknown>) => {
+    const match = /language-(\w+)/.exec(className || '');
+    const codeContent = getNodeText(children).replace(/\n$/, '');
+
+    if (!inline && match) {
+        return (
+            <SyntaxHighlighter
+                style={isDark ? oneDark : oneLight}
+                language={match[1]}
+                PreTag="div"
+                customStyle={{
+                    borderRadius: '0.5rem',
+                    fontSize: '0.8rem',
+                }}
+            >
+                {codeContent}
+            </SyntaxHighlighter>
+        );
+    }
+
+    return (
+        <code className={className} {...props}>
+            {children}
+        </code>
+    );
+};
 
 // Markdown imports
 import Markdown from 'react-markdown';
@@ -85,6 +149,95 @@ const getLanguageFromFilename = (filename: string): string => {
     return langMap[ext] || 'text';
 };
 
+const getCommitClassification = (
+    files: string[],
+    addedCount: number,
+    deletedCount: number,
+    modifiedCount: number,
+): { prefix: string; scope: string } => {
+    const exts = files.map((f) => f.split('.').pop()?.toLowerCase() || '');
+    const hasTests = files.some((f) => f.includes('.test.') || f.includes('.spec.') || f.includes('__tests__'));
+    const hasStyles = exts.some((e) => ['css', 'scss', 'sass', 'less'].includes(e));
+    const hasConfig = files.some((f) => ['package.json', 'tsconfig.json', 'vite.config', '.env', 'webpack', 'eslint', '.gitignore'].some((c) => f.includes(c)));
+    const hasComponents = files.some((f) => f.includes('components/') || f.endsWith('.tsx') || f.endsWith('.jsx'));
+    const hasBackend = files.some((f) => f.includes('server/') || f.includes('routes/') || f.includes('api.'));
+    const hasDb = files.some((f) => f.includes('db.') || f.includes('migration') || f.includes('schema'));
+
+    if (hasTests) return { prefix: 'test', scope: '' };
+    if (hasStyles && !hasComponents) return { prefix: 'style', scope: '' };
+    if (hasConfig) return { prefix: 'chore', scope: 'config' };
+    if (hasDb) return { prefix: 'feat', scope: 'db' };
+    if (hasBackend) return { prefix: modifiedCount > 0 ? 'fix' : 'feat', scope: 'api' };
+    if (hasComponents) return { prefix: addedCount > 0 ? 'feat' : 'fix', scope: 'ui' };
+    if (deletedCount === files.length) return { prefix: 'refactor', scope: '' };
+    if (modifiedCount > 0 && addedCount === 0) return { prefix: 'fix', scope: '' };
+    return { prefix: 'feat', scope: '' };
+};
+
+const getCommitDescription = (files: string[]): string => {
+    const fileNames = files.map((f) => f.split('/').pop()?.replace(/\.[^.]+$/, '') || f);
+    if (files.length === 1) return `update ${fileNames[0]}`;
+    if (files.length <= 3) return `update ${fileNames.join(', ')}`;
+    return `update ${files.length} files`;
+};
+
+const isDiffHeaderLine = (line: string): boolean => (
+    line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('--- ') || line.startsWith('+++ ')
+);
+
+const isDiffChunkOrChangeStart = (line: string): boolean => (
+    line.startsWith('@@') || line.startsWith('+') || line.startsWith('-')
+);
+
+const toDiffLine = (line: string): DiffLine => {
+    if (line.startsWith('+') && !line.startsWith('+++')) return { type: 'add', content: line.substring(1) };
+    if (line.startsWith('-') && !line.startsWith('---')) return { type: 'del', content: line.substring(1) };
+    return { type: 'normal', content: line };
+};
+
+const parseGitDiff = (rawDiff: string): DiffLine[] => {
+    const lines = rawDiff.split('\n');
+    const parsedLines: DiffLine[] = [];
+    let skipHeader = true;
+
+    for (const line of lines) {
+        if (skipHeader) {
+            if (isDiffHeaderLine(line)) continue;
+            if (isDiffChunkOrChangeStart(line)) skipHeader = false;
+        }
+
+        if (skipHeader && line.trim() !== '') continue;
+        parsedLines.push(toDiffLine(line));
+    }
+
+    if (parsedLines.length === 0 && rawDiff.length > 0) return [{ type: 'normal', content: rawDiff }];
+    if (parsedLines.length === 0) return [{ type: 'normal', content: 'Sem alterações visíveis ou arquivo binário.' }];
+    return parsedLines;
+};
+
+const getDiffLineBackgroundClass = (type: DiffLine['type']): string => {
+    if (type === 'add') return 'bg-emerald-50/50 dark:bg-emerald-500/5';
+    if (type === 'del') return 'bg-rose-50/50 dark:bg-rose-500/5';
+    return '';
+};
+
+const getDiffLineMarker = (type: DiffLine['type']): string => {
+    if (type === 'add') return '+';
+    if (type === 'del') return '-';
+    return '';
+};
+
+const getDiffLineTextClass = (type: DiffLine['type']): string => {
+    if (type === 'add') return 'text-emerald-800 dark:text-emerald-400';
+    if (type === 'del') return 'text-rose-800 dark:text-rose-400 line-through decoration-rose-800/30 dark:decoration-rose-400/30 opacity-70';
+    return 'text-slate-600 dark:text-slate-400';
+};
+
+const removeChangesById = (list: GitChange[], ids: Set<string>): GitChange[] => list.filter((item) => !ids.has(item.id));
+
+const gitInsetCard =
+    'rounded-2xl border border-slate-200/75 bg-slate-50/78 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.82)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none';
+
 // Componente CodeEditor com react-syntax-highlighter
 const CodeEditor: React.FC<{ content: string; language: string; filename?: string }> = ({ content, language, filename }) => {
     // Detectar tema do sistema
@@ -129,29 +282,8 @@ const MarkdownViewer: React.FC<{ content: string }> = ({ content }) => {
                 <Markdown
                     remarkPlugins={[remarkGfm]}
                     components={{
-                        // Syntax highlighting para code blocks dentro do Markdown
-                        code({ node: _node, inline, className, children, ...props }: any) {
-                            const match = /language-(\w+)/.exec(className || '');
-                            const codeContent = String(children).replace(/\n$/, '');
-
-                            return !inline && match ? (
-                                <SyntaxHighlighter
-                                    style={isDark ? oneDark : oneLight}
-                                    language={match[1]}
-                                    PreTag="div"
-                                    customStyle={{
-                                        borderRadius: '0.5rem',
-                                        fontSize: '0.8rem',
-                                    }}
-                                >
-                                    {codeContent}
-                                </SyntaxHighlighter>
-                            ) : (
-                                <code className={className} {...props}>
-                                    {children}
-                                </code>
-                            );
-                        }
+                        code: ({ node: _node, inline, className, children, ...props }: any) =>
+                            renderMarkdownCodeNode(isDark, Boolean(inline), className, children, props)
                     }}
                 >
                     {content}
@@ -200,41 +332,41 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({ repoFiles, changes, repoI
     };
 
     return (
-        <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950/50 overflow-y-auto p-8">
+        <div className="flex flex-col h-full page-shell overflow-y-auto p-8">
             <div className="max-w-5xl mx-auto w-full space-y-8">
 
                 <div>
                     <h2 className="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                        <BarChart3 className="w-5 h-5 text-fiori-blue" />
+                        <BarChart3 className="w-5 h-5 text-primary-500" />
                         Code Intelligence
                     </h2>
-                    <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">Análise estática e métricas do repositório.</p>
+                    <p className="app-copy-compact mt-1 text-slate-500 dark:text-slate-400">Análise estática e métricas do repositório.</p>
                 </div>
 
                 {/* Metrics Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="bg-white dark:bg-slate-900/30 p-5 rounded-lg border border-slate-200 dark:border-slate-700/50 shadow-sm">
+                    <div className="surface-card rounded-2xl border border-slate-200/75 bg-white/88 p-5 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-transparent dark:shadow-none">
                         <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 mb-3">
                             <Flame className="w-4 h-4 text-orange-500" />
-                            <span className="text-[10px] font-bold uppercase tracking-wider">Arquivos</span>
+                            <span className="app-metric-label tracking-[0.16em]">Arquivos</span>
                         </div>
                         <div className="text-3xl font-bold text-slate-800 dark:text-white tracking-tight">{totalFiles}</div>
                         <p className="text-xs text-slate-400 mt-1">Total no repositório</p>
                     </div>
-                    <div className="bg-white dark:bg-slate-900/30 p-5 rounded-lg border border-slate-200 dark:border-slate-700/50 shadow-sm">
+                    <div className="surface-card rounded-2xl border border-slate-200/75 bg-white/88 p-5 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-transparent dark:shadow-none">
                         <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 mb-3">
                             <Zap className="w-4 h-4 text-amber-500" />
-                            <span className="text-[10px] font-bold uppercase tracking-wider">Commits</span>
+                            <span className="app-metric-label tracking-[0.16em]">Commits</span>
                         </div>
                         <div className="text-3xl font-bold text-slate-800 dark:text-white tracking-tight">{logTotal}</div>
                         <p className="text-xs text-slate-400 mt-1">Em {currentBranch}</p>
                     </div>
-                    <div className="bg-white dark:bg-slate-900/30 p-5 rounded-lg border border-slate-200 dark:border-slate-700/50 shadow-sm">
+                    <div className="surface-card rounded-2xl border border-slate-200/75 bg-white/88 p-5 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-transparent dark:shadow-none">
                         <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 mb-3">
                             <Check className="w-4 h-4 text-emerald-500" />
-                            <span className="text-[10px] font-bold uppercase tracking-wider">Health Score</span>
+                            <span className="app-metric-label tracking-[0.16em]">Health Score</span>
                         </div>
-                        <div className={`text-3xl font-bold tracking-tight ${healthScore >= 80 ? 'text-emerald-500' : healthScore >= 50 ? 'text-amber-500' : 'text-rose-500'}`}>
+                        <div className={`text-3xl font-bold tracking-tight ${getHealthScoreColorClass(healthScore)}`}>
                             {healthScore}%
                         </div>
                         <p className="text-xs text-slate-400 mt-1">{changedFiles} alterações pendentes</p>
@@ -242,31 +374,33 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({ repoFiles, changes, repoI
                 </div>
 
                 {/* Git Log */}
-                <div className="bg-white dark:bg-slate-900/30 rounded-lg border border-slate-200 dark:border-slate-700/50 overflow-hidden shadow-sm">
-                    <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-900/20 flex justify-between items-center">
+                <div className="surface-card overflow-hidden rounded-2xl border border-slate-200/75 bg-white/88 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-transparent dark:shadow-none">
+                    <div className="surface-header px-6 py-4 flex justify-between items-center">
                         <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
                             <GitBranch className="w-3.5 h-3.5" /> Histórico de Commits — {currentBranch}
                         </h3>
                         <span className="text-xs text-slate-400">{logTotal} commits</span>
                     </div>
                     <div className="divide-y divide-slate-100 dark:divide-slate-800/50">
-                        {logLoading ? (
+                        {logLoading && (
                             <div className="px-6 py-8 text-center text-slate-400 flex items-center justify-center gap-2">
                                 <RefreshCw className="w-4 h-4 animate-spin" /> Carregando histórico...
                             </div>
-                        ) : commits.length === 0 ? (
+                        )}
+                        {!logLoading && commits.length === 0 && (
                             <div className="px-6 py-8 text-center text-slate-400 text-sm italic">
                                 Nenhum commit encontrado.
                             </div>
-                        ) : (
+                        )}
+                        {!logLoading && commits.length > 0 && (
                             commits.map((commit) => (
-                                <div key={commit.fullHash} className="px-6 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-colors">
+                                <div key={commit.fullHash} className="px-6 py-3 transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/20">
                                     <div className="flex items-start justify-between gap-4">
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{commit.message}</p>
-                                            <p className="text-xs text-slate-400 mt-0.5">{commit.author} · {formatDate(commit.date)}</p>
+                                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate">{commit.message}</p>
+                                    <p className="mt-0.5 text-xs text-slate-400">{commit.author} · {formatDate(commit.date)}</p>
                                         </div>
-                                        <span className="font-mono text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-2 py-0.5 rounded flex-shrink-0">{commit.hash}</span>
+                                        <span className="font-mono text-[10px] rounded border border-slate-200/70 bg-slate-50/80 px-2 py-0.5 text-slate-500 shadow-sm shadow-slate-200/50 flex-shrink-0 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:shadow-none">{commit.hash}</span>
                                     </div>
                                 </div>
                             ))
@@ -274,11 +408,11 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({ repoFiles, changes, repoI
                     </div>
                     {/* Pagination */}
                     {totalPages > 1 && (
-                        <div className="px-6 py-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/20">
+                        <div className="surface-header px-6 py-3 flex items-center justify-between">
                             <button
                                 onClick={() => setLogPage(p => Math.max(0, p - 1))}
                                 disabled={logPage === 0}
-                                className="text-xs px-3 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                            className="text-xs px-3 py-1.5 rounded border border-slate-200/80 bg-white/80 text-slate-600 shadow-sm shadow-slate-200/50 transition-colors hover:bg-slate-50/80 disabled:opacity-40 dark:border-slate-700 dark:bg-transparent dark:text-slate-300 dark:shadow-none dark:hover:bg-slate-800"
                             >
                                 ← Anterior
                             </button>
@@ -286,7 +420,7 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({ repoFiles, changes, repoI
                             <button
                                 onClick={() => setLogPage(p => Math.min(totalPages - 1, p + 1))}
                                 disabled={logPage >= totalPages - 1}
-                                className="text-xs px-3 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                            className="text-xs px-3 py-1.5 rounded border border-slate-200/80 bg-white/80 text-slate-600 shadow-sm shadow-slate-200/50 transition-colors hover:bg-slate-50/80 disabled:opacity-40 dark:border-slate-700 dark:bg-transparent dark:text-slate-300 dark:shadow-none dark:hover:bg-slate-800"
                             >
                                 Próxima →
                             </button>
@@ -296,19 +430,19 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({ repoFiles, changes, repoI
 
                 {/* Changed Files List */}
                 {changes.length > 0 && (
-                    <div className="bg-white dark:bg-slate-900/30 rounded-lg border border-slate-200 dark:border-slate-700/50 overflow-hidden shadow-sm">
-                        <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-900/20">
+                    <div className="surface-card overflow-hidden rounded-2xl border border-slate-200/75 bg-white/88 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-transparent dark:shadow-none">
+                        <div className="surface-header px-6 py-4">
                             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Alterações Pendentes ({changedFiles})</h3>
                         </div>
                         <div className="divide-y divide-slate-100 dark:divide-slate-800/50">
-                            {changes.map((change, idx) => (
-                                <div key={idx} className="px-6 py-3 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-colors">
+                            {changes.map((change) => (
+                                <div key={`${change.file}-${change.status}`} className="px-6 py-3 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-colors">
                                     <div className="flex items-center gap-3">
                                         <FileCode className="w-4 h-4 text-slate-400" />
                                         <p className="text-sm font-mono text-slate-700 dark:text-slate-200">{change.file}</p>
                                     </div>
-                                    <div className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${change.status === 'added' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : change.status === 'deleted' ? 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400' : 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>
-                                        {change.status === 'added' ? 'Novo' : change.status === 'deleted' ? 'Removido' : 'Modificado'}
+                                    <div className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${getChangeStatusClass(change.status)}`}>
+                                        {getChangeStatusLabel(change.status)}
                                     </div>
                                 </div>
                             ))}
@@ -321,6 +455,7 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({ repoFiles, changes, repoI
 };
 
 const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logActivity, onRefreshData }) => {
+    const hasRepositories = (repos || []).length > 0;
     const { confirm } = useConfirm();
     // Estado para repositório selecionado
     const [selectedRepoId, setSelectedRepoId] = useState<string | null>(repos.length > 0 ? repos[0].id : null);
@@ -356,24 +491,6 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
     const [isResizing, setIsResizing] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
 
-    // Show empty state if no repositories are registered
-    if (!repos || repos.length === 0) {
-        return (
-            <div className="h-full flex items-center justify-center bg-fiori-bgLight dark:bg-fiori-bgDark p-8">
-                <div className="text-center max-w-md">
-                    <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-6">
-                        <FolderGit2 className="w-10 h-10 text-slate-400" />
-                    </div>
-                    <h2 className="text-xl font-semibold text-slate-700 dark:text-white mb-3">Nenhum Repositório Configurado</h2>
-                    <p className="text-slate-500 dark:text-slate-400 mb-6">
-                        Para usar a integração Git, primeiro adicione um repositório na aba "Repositórios" ou configure o diretório Git nas configurações do sistema.
-                    </p>
-                </div>
-            </div>
-        );
-    }
-
-
     const startResizing = useCallback(() => setIsResizing(true), []);
     const stopResizing = useCallback(() => setIsResizing(false), []);
     const resize = useCallback((mouseEvent: MouseEvent) => {
@@ -386,8 +503,8 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
 
     useEffect(() => {
         if (isResizing) {
-            window.addEventListener('mousemove', resize);
-            window.addEventListener('mouseup', stopResizing);
+            globalThis.addEventListener('mousemove', resize);
+            globalThis.addEventListener('mouseup', stopResizing);
             document.body.style.cursor = 'col-resize';
             document.body.style.userSelect = 'none';
         } else {
@@ -395,8 +512,8 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
             document.body.style.userSelect = '';
         }
         return () => {
-            window.removeEventListener('mousemove', resize);
-            window.removeEventListener('mouseup', stopResizing);
+            globalThis.removeEventListener('mousemove', resize);
+            globalThis.removeEventListener('mouseup', stopResizing);
         };
     }, [isResizing, resize, stopResizing]);
 
@@ -428,7 +545,7 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
                     name: f.name,
                     relativePath: f.relativePath || f.name,
                     type: f.type === 'directory' ? 'folder' : 'file',
-                    language: f.name.endsWith('.tsx') ? 'tsx' : f.name.endsWith('.ts') ? 'ts' : f.name.endsWith('.js') ? 'js' : 'text'
+                    language: getRepoTreeLanguage(f.name)
                 }));
                 setRepoFiles(fileNodes);
                 setCurrentSubPath('');
@@ -468,7 +585,7 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
                 name: f.name,
                 relativePath: f.relativePath || f.name,
                 type: f.type === 'directory' ? 'folder' : 'file',
-                language: f.name.endsWith('.tsx') ? 'tsx' : f.name.endsWith('.ts') ? 'ts' : f.name.endsWith('.js') ? 'js' : 'text'
+                language: getRepoTreeLanguage(f.name)
             }));
             setRepoFiles(fileNodes);
             setCurrentSubPath(subPath);
@@ -548,6 +665,7 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
     const stageAll = async () => {
         if (!selectedRepoId || changes.length === 0) return;
         const toStage = [...changes];
+        const toStageIds = new Set(toStage.map((item) => item.id));
         setStagedChanges(prev => [...prev, ...toStage]);
         setChanges([]);
         try {
@@ -555,7 +673,7 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
         } catch (err: any) {
             // Rollback
             setChanges(prev => [...prev, ...toStage]);
-            setStagedChanges(prev => prev.filter(c => !toStage.find(t => t.id === c.id)));
+            setStagedChanges(prev => removeChangesById(prev, toStageIds));
             addToast('Falha no Stage', 'error', err.message || 'Não foi possível adicionar os arquivos ao stage.');
         }
     };
@@ -563,6 +681,7 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
     const unstageAll = async () => {
         if (!selectedRepoId || stagedChanges.length === 0) return;
         const toUnstage = [...stagedChanges];
+        const toUnstageIds = new Set(toUnstage.map((item) => item.id));
         setChanges(prev => [...prev, ...toUnstage]);
         setStagedChanges([]);
         try {
@@ -570,7 +689,7 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
         } catch (err: any) {
             // Rollback
             setStagedChanges(prev => [...prev, ...toUnstage]);
-            setChanges(prev => prev.filter(c => !toUnstage.find(t => t.id === c.id)));
+            setChanges(prev => removeChangesById(prev, toUnstageIds));
             addToast('Falha no Unstage', 'error', err.message || 'Não foi possível remover os arquivos do stage.');
         }
     };
@@ -584,37 +703,8 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
         const deleted = stagedChanges.filter(c => c.status === 'deleted').map(c => c.file);
         const modified = stagedChanges.filter(c => c.status === 'modified').map(c => c.file);
 
-        const exts = files.map(f => f.split('.').pop()?.toLowerCase() || '');
-        const hasTests = files.some(f => f.includes('.test.') || f.includes('.spec.') || f.includes('__tests__'));
-        const hasStyles = exts.some(e => ['css', 'scss', 'sass', 'less'].includes(e));
-        const hasConfig = files.some(f => ['package.json', 'tsconfig.json', 'vite.config', '.env', 'webpack', 'eslint', '.gitignore'].some(c => f.includes(c)));
-        const hasComponents = files.some(f => f.includes('components/') || f.endsWith('.tsx') || f.endsWith('.jsx'));
-        const hasBackend = files.some(f => f.includes('server/') || f.includes('routes/') || f.includes('api.'));
-        const hasDb = files.some(f => f.includes('db.') || f.includes('migration') || f.includes('schema'));
-
-        let prefix = 'chore';
-        let scope = '';
-        let description = '';
-
-        if (hasTests) { prefix = 'test'; }
-        else if (hasStyles && !hasComponents) { prefix = 'style'; }
-        else if (hasConfig) { prefix = 'chore'; scope = 'config'; }
-        else if (hasDb) { prefix = 'feat'; scope = 'db'; }
-        else if (hasBackend) { prefix = modified.length > 0 ? 'fix' : 'feat'; scope = 'api'; }
-        else if (hasComponents) { prefix = added.length > 0 ? 'feat' : 'fix'; scope = 'ui'; }
-        else if (deleted.length === files.length) { prefix = 'refactor'; }
-        else if (modified.length > 0 && added.length === 0) { prefix = 'fix'; }
-        else { prefix = 'feat'; }
-
-        const fileNames = files.map(f => f.split('/').pop()?.replace(/\.[^.]+$/, '') || f);
-        if (files.length === 1) {
-            description = `update ${fileNames[0]}`;
-        } else if (files.length <= 3) {
-            description = `update ${fileNames.join(', ')}`;
-        } else {
-            description = `update ${files.length} files`;
-        }
-
+        const { prefix, scope } = getCommitClassification(files, added.length, deleted.length, modified.length);
+        const description = getCommitDescription(files);
         const msg = scope ? `${prefix}(${scope}): ${description}` : `${prefix}: ${description}`;
         setCommitMessage(msg);
         setIsGenerating(false);
@@ -711,9 +801,12 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
     };
 
     const activeFileObj = [...changes, ...stagedChanges].find(c => c.id === selectedFileId);
+    const modifiedCount = changes.filter(c => c.status === 'modified').length;
+    const addedCount = changes.filter(c => c.status === 'added').length;
+    const deletedCount = changes.filter(c => c.status === 'deleted').length;
 
     // Estado para armazenar linhas do diff
-    const [diffLines, setDiffLines] = useState<{ type: 'add' | 'del' | 'normal', content: string }[]>([]);
+    const [diffLines, setDiffLines] = useState<DiffLine[]>([]);
 
     useEffect(() => {
         const fetchDiff = async () => {
@@ -723,50 +816,10 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
             }
 
             try {
-                // Verificar se arquivo está staged
                 const isStaged = stagedChanges.some(c => c.id === activeFileObj.id);
-                // Buscar diff real do backend
                 const res = await api.getRepoFileDiff(selectedRepoId, activeFileObj.file, isStaged);
-
-                // Parsear output do git diff
                 const rawDiff = res.diff || '';
-                const lines = rawDiff.split('\n');
-                const parsedLines: { type: 'add' | 'del' | 'normal', content: string }[] = [];
-
-                let skipHeader = true;
-
-                for (const line of lines) {
-                    // Ignorar cabeçalhos do git diff até chegar no conteúdo ou chunks
-                    if (skipHeader) {
-                        if (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('--- ') || line.startsWith('+++ ')) {
-                            continue;
-                        }
-                        // Se encontrar @@ ou linhas de adição/remoção, paramos de pular header
-                        if (line.startsWith('@@') || line.startsWith('+') || line.startsWith('-')) {
-                            skipHeader = false;
-                        }
-                    }
-
-                    if (skipHeader && line.trim() !== '') continue;
-
-                    if (line.startsWith('+') && !line.startsWith('+++')) {
-                        parsedLines.push({ type: 'add', content: line.substring(1) });
-                    } else if (line.startsWith('-') && !line.startsWith('---')) {
-                        parsedLines.push({ type: 'del', content: line.substring(1) });
-                    } else {
-                        parsedLines.push({ type: 'normal', content: line });
-                    }
-                }
-
-                // Se nenhum diff foi gerado mas arquivo existe e é modificado, pode ser erro de parser ou vazio.
-                if (parsedLines.length === 0 && rawDiff.length > 0) {
-                    // Fallback: mostrar raw
-                    setDiffLines([{ type: 'normal', content: rawDiff }]);
-                } else if (parsedLines.length === 0) {
-                    setDiffLines([{ type: 'normal', content: 'Sem alterações visíveis ou arquivo binário.' }]);
-                } else {
-                    setDiffLines(parsedLines);
-                }
+                setDiffLines(parseGitDiff(rawDiff));
 
             } catch (err) {
                 console.error('Erro ao carregar diff:', err);
@@ -777,11 +830,27 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
         fetchDiff();
     }, [selectedRepoId, activeFileObj?.id, activeFileObj?.file]); // Deps cuidadosas para evitar loop
 
-    if (activeTab === 'insights') {
-        const tabCls = (t: string) => `py-3 px-4 text-sm font-medium border-b-2 transition-colors ${activeTab === t ? 'border-fiori-blue text-fiori-blue' : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`;
+    if (!hasRepositories) {
         return (
-            <div className="h-[calc(100vh-4rem)] flex flex-col">
-                <div className="flex border-b border-slate-200 dark:border-slate-700 bg-fiori-cardLight dark:bg-fiori-cardDark px-6">
+            <div className="h-full page-shell flex items-center justify-center p-8">
+                <div className="surface-card max-w-md rounded-[1.6rem] border border-slate-200/75 bg-white/90 p-8 text-center shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-transparent dark:shadow-none">
+                    <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-slate-50/85 shadow-sm shadow-slate-200/50 dark:bg-white/[0.05] dark:shadow-none">
+                        <FolderGit2 className="h-10 w-10 text-slate-400" />
+                    </div>
+                    <h2 className="mb-3 text-xl font-semibold text-slate-700 dark:text-white">Nenhum Repositorio Configurado</h2>
+                    <p className="text-slate-500 dark:text-[var(--text-muted)]">
+                        Para usar a integração Git, primeiro adicione um repositório na aba "Repositórios" ou configure o diretório Git nas configurações do sistema.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
+    if (activeTab === 'insights') {
+        const tabCls = (t: string) => `rounded-xl border px-4 py-3 text-sm font-medium transition-all ${activeTab === t ? 'border-slate-200/80 bg-white/85 text-primary-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.08] dark:text-primary-300 dark:shadow-none' : 'border-transparent text-slate-500 hover:border-slate-200/70 hover:bg-slate-50/80 hover:text-slate-700 dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:hover:text-slate-300'}`;
+        return (
+            <div className="h-[calc(100vh-4rem)] flex flex-col page-shell">
+                <div className="glass-panel-primary flex gap-2 border-b border-slate-200/50 px-6 py-3 dark:border-white/10">
                     <button onClick={() => setActiveTab('changes')} className={tabCls('changes')}>Alterações</button>
                     <button onClick={() => setActiveTab('source')} className={tabCls('source')}>Código Fonte</button>
                     <button onClick={() => setActiveTab('insights')} className={tabCls('insights')}>Insights</button>
@@ -792,31 +861,88 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
     }
 
     return (
-        <div ref={containerRef} className="p-6 h-[calc(100vh-4rem)] flex flex-col md:flex-row gap-4">
+        <div className="page-shell min-h-full">
+            <div className="page-container page-stack">
+                <section className="page-panel-grid xl:grid-cols-12">
+                    <div className="surface-card overflow-hidden rounded-[1.6rem] xl:col-span-7">
+                        <div className="panel-header-block border-b border-slate-200/70 bg-slate-50/45 dark:border-white/10 dark:bg-transparent">
+                            <div className="flex flex-wrap items-start justify-between gap-4">
+                                <div className="max-w-2xl">
+                                    <p className="app-section-label">Controle de Fonte</p>
+                                    <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 dark:text-[var(--text-primary)]">
+                                        {selectedRepo ? `Fluxo Git de ${selectedRepo.name}` : 'Operacao Git'}
+                                    </h1>
+                                    <p className="app-copy mt-2">
+                                        Visualize alteracoes locais, stage, branch ativa e remote do repositorio com leitura rapida de risco e acao.
+                                    </p>
+                                </div>
+                                <div className="app-soft-badge">
+                                    {selectedRepo ? selectedRepo.name : 'Sem repositorio'}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 px-6 py-5 md:grid-cols-3">
+                            <div className={gitInsetCard}>
+                                <p className="app-metric-label">Branch ativa</p>
+                                <p className="mt-3 font-mono text-lg font-semibold text-slate-900 dark:text-[var(--text-primary)]">{currentBranch}</p>
+                                <p className="app-copy-compact mt-2">{branches.length} branch(es) disponiveis</p>
+                            </div>
+                            <div className={gitInsetCard}>
+                                <p className="app-metric-label">Mudancas pendentes</p>
+                                <p className="mt-3 text-3xl font-light text-slate-900 dark:text-[var(--text-primary)]">{changes.length}</p>
+                                <p className="app-copy-compact mt-2">{addedCount} novas, {modifiedCount} modificadas, {deletedCount} removidas.</p>
+                            </div>
+                            <div className={gitInsetCard}>
+                                <p className="app-metric-label">Stage e remote</p>
+                                <p className="mt-3 text-3xl font-light text-slate-900 dark:text-[var(--text-primary)]">{stagedChanges.length}</p>
+                                <p className="app-copy-compact mt-2">{remoteUrl ? 'Remote configurado e pronto para push/pull.' : 'Remote ainda nao configurado.'}</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="surface-card panel-body-block rounded-[1.6rem] xl:col-span-5">
+                        <p className="app-section-label">Leitura Operacional</p>
+                        <div className="mt-4 panel-stack-tight">
+                            <div className={gitInsetCard}>
+                                <h3 className="text-base font-semibold text-slate-900 dark:text-[var(--text-primary)]">Acao critica</h3>
+                                <p className="app-copy-compact mt-1">
+                                    {stagedChanges.length > 0 ? 'Existem arquivos no stage. Revise diff e finalize commit com mensagem clara antes de push.' : 'Sem arquivos no stage. Adicione alteracoes relevantes antes de comprometer a branch.'}
+                                </p>
+                            </div>
+                            <div className={gitInsetCard}>
+                                <h3 className="text-base font-semibold text-slate-900 dark:text-[var(--text-primary)]">Risco atual</h3>
+                                <p className="app-copy-compact mt-1">
+                                    {repoPathMissing ? 'O caminho local do repositorio esta ausente. Operacoes Git locais estao comprometidas ate a correcao.' : 'O caminho local esta acessivel. O principal risco agora esta no volume e natureza das mudancas pendentes.'}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+        <div ref={containerRef} className="page-panel-grid h-[calc(100vh-4rem)] md:flex md:grid-cols-none md:flex-row">
             <div
                 style={{ width: window.innerWidth >= 768 ? leftPanelWidth : '100%' }}
-                className="flex-shrink-0 bg-white dark:bg-slate-900/30 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700/50 flex flex-col h-full overflow-hidden transition-width duration-75 ease-out"
+                className="surface-card flex h-full flex-shrink-0 flex-col overflow-hidden rounded-[1.6rem] border border-slate-200/75 bg-white/90 shadow-sm shadow-slate-200/60 transition-width duration-75 ease-out dark:border-white/10 dark:bg-transparent dark:shadow-none"
             >
                 {/* Seletor de Repositório */}
-                <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/20">
+                <div className="panel-body-compact border-b border-slate-100 bg-slate-50/55 dark:border-white/10 dark:bg-white/[0.02]">
                     <div className="flex items-center gap-2 mb-3">
-                        <FolderGit2 className="w-3.5 h-3.5 text-fiori-blue" />
-                        <span className="text-[10px] font-bold tracking-wider text-slate-400 dark:text-slate-500 uppercase">Repositório</span>
+                        <FolderGit2 className="w-3.5 h-3.5 text-primary-500" />
+                        <span className="app-metric-label">Repositório</span>
                     </div>
                     <select
                         value={selectedRepoId || ''}
                         onChange={(e) => setSelectedRepoId(e.target.value)}
-                        className="w-full appearance-none bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm rounded px-3 py-2 focus:outline-none focus:border-fiori-blue transition-colors font-medium"
+                        className="app-input w-full appearance-none rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 dark:text-slate-200"
                     >
                         {repos.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                     </select>
                     {selectedRepo?.localPath && !repoPathMissing && (
-                        <p className="text-[10px] text-slate-400 mt-1 truncate" title={selectedRepo.localPath}>
+                        <p className="mt-1 truncate text-[10px] text-slate-400" title={selectedRepo.localPath}>
                             📁 {selectedRepo.localPath}
                         </p>
                     )}
                     {repoPathMissing && selectedRepo?.localPath && (
-                        <div className="mt-2 p-2 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50">
+                        <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/80 p-2 shadow-sm shadow-amber-100/60 dark:border-amber-700/50 dark:bg-amber-900/20 dark:shadow-none">
                             <div className="flex items-start gap-2">
                                 <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
                                 <div className="flex-1 min-w-0">
@@ -837,7 +963,7 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
                                         addToast('Falha ao Remover', 'error', e.message || 'Não foi possível remover o repositório do sistema.');
                                     }
                                 }}
-                                className="mt-2 w-full flex items-center justify-center gap-1.5 px-2 py-1.5 bg-amber-100 hover:bg-amber-200 dark:bg-amber-800/30 dark:hover:bg-amber-800/50 text-amber-700 dark:text-amber-400 text-[10px] font-semibold rounded border border-amber-200 dark:border-amber-700/50 transition-colors"
+                                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-amber-200 bg-amber-100/80 px-2 py-1.5 text-[10px] font-semibold text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-700/50 dark:bg-amber-800/30 dark:text-amber-400 dark:hover:bg-amber-800/50"
                             >
                                 <Trash2 className="w-3 h-3" /> Remover do Sistema
                             </button>
@@ -846,56 +972,71 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
                 </div>
 
                 {/* Branch Atual */}
-                <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/20">
+                <div className="panel-body-compact border-b border-slate-100 bg-slate-50/55 dark:border-white/10 dark:bg-white/[0.02]">
                     <div className="flex items-center gap-2 mb-3">
-                        <GitBranch className="w-3.5 h-3.5 text-fiori-blue" />
-                        <span className="text-[10px] font-bold tracking-wider text-slate-400 dark:text-slate-500 uppercase">Branch Atual</span>
+                        <GitBranch className="w-3.5 h-3.5 text-primary-500" />
+                        <span className="app-metric-label">Branch Atual</span>
                     </div>
                     {isNewBranchOpen ? (
                         <div className="flex gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                            <input autoFocus type="text" value={newBranchName} onChange={(e) => setNewBranchName(e.target.value)} placeholder="Nome (ex: feature/login)" className="flex-1 text-xs px-2 py-1.5 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 focus:outline-none focus:ring-1 focus:ring-fiori-blue" onKeyDown={(e) => { if (e.key === 'Enter') handleCreateBranch(); if (e.key === 'Escape') setIsNewBranchOpen(false); }} />
-                            <button onClick={handleCreateBranch} className="p-1.5 bg-fiori-blue text-white rounded hover:bg-blue-600"><Check className="w-3 h-3" /></button>
-                            <button onClick={() => setIsNewBranchOpen(false)} className="p-1.5 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded hover:opacity-80"><Undo2 className="w-3 h-3" /></button>
+                            <input
+                                autoFocus
+                                type="text"
+                                value={newBranchName}
+                                onChange={(e) => setNewBranchName(e.target.value)}
+                                placeholder="Nome (ex: feature/login)"
+                                className="app-input flex-1 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary-500/30"
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        handleCreateBranch();
+                                    }
+                                    if (e.key === 'Escape') {
+                                        setIsNewBranchOpen(false);
+                                    }
+                                }}
+                            />
+                            <button onClick={handleCreateBranch} className="rounded-xl bg-primary-600 p-2 text-white hover:bg-primary-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-100/80 dark:focus-visible:ring-sky-500/20"><Check className="w-3 h-3" /></button>
+                            <button onClick={() => setIsNewBranchOpen(false)} className="app-soft-icon-button rounded-xl p-2"><Undo2 className="w-3 h-3" /></button>
                         </div>
                     ) : (
                         <div className="flex gap-2">
                             <div className="relative flex-1 group">
-                                <select value={currentBranch} onChange={(e) => handleBranchSwitch(e.target.value)} disabled={isCheckingOut} className="w-full appearance-none bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 text-sm rounded px-3 py-1.5 focus:outline-none focus:border-fiori-blue disabled:opacity-50 transition-colors">
+                                <select value={currentBranch} onChange={(e) => handleBranchSwitch(e.target.value)} disabled={isCheckingOut} className="app-input w-full appearance-none rounded-xl px-3 py-2 text-sm text-slate-700 focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 disabled:opacity-50 transition-colors dark:text-slate-200">
                                     {branches.map(b => <option key={b} value={b}>{b}</option>)}
                                 </select>
-                                <ChevronDown className="w-4 h-4 text-slate-500 absolute right-2 top-2 pointer-events-none group-hover:text-fiori-blue transition-colors" />
+                                <ChevronDown className="w-4 h-4 text-slate-500 absolute right-2 top-2 pointer-events-none group-hover:text-primary-500 transition-colors" />
                             </div>
-                            <button onClick={() => setIsNewBranchOpen(true)} className="p-1.5 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-fiori-blue transition-colors"><Plus className="w-4 h-4" /></button>
+                            <button onClick={() => setIsNewBranchOpen(true)} className="app-soft-icon-button rounded-xl p-2 hover:text-primary-500"><Plus className="w-4 h-4" /></button>
                         </div>
                     )}
                 </div>
 
-                <div className="flex border-b border-slate-100 dark:border-slate-800">
-                    <button onClick={() => setActiveTab('changes')} className={`flex-1 py-3 text-xs font-medium border-b-2 transition-colors flex items-center justify-center gap-2 ${activeTab === 'changes' ? 'border-fiori-blue text-fiori-blue bg-slate-50/50 dark:bg-slate-900/30' : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}><RefreshCw className="w-3.5 h-3.5" /> ALTERAÇÕES</button>
-                    <button onClick={() => setActiveTab('source')} className={`flex-1 py-3 text-xs font-medium border-b-2 transition-colors flex items-center justify-center gap-2 ${activeTab === 'source' ? 'border-fiori-blue text-fiori-blue bg-slate-50/50 dark:bg-slate-900/30' : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}><Folder className="w-3.5 h-3.5" /> ARQUIVOS</button>
-                    <button onClick={() => setActiveTab('insights')} className="flex-1 py-3 text-xs font-medium border-b-2 border-transparent transition-colors flex items-center justify-center gap-2 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"><BarChart3 className="w-3.5 h-3.5" /> INSIGHTS</button>
+                <div className="page-tabs mx-4 mt-3 mb-0">
+                    <button onClick={() => setActiveTab('changes')} className={`flex flex-1 items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-medium transition-all ${activeTab === 'changes' ? 'border-slate-200/80 bg-white/85 text-primary-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.08] dark:text-primary-300 dark:shadow-none' : 'border-transparent text-slate-500 hover:border-slate-200/70 hover:bg-slate-50/80 hover:text-slate-700 dark:text-[var(--text-muted)] dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:hover:text-slate-300'}`}><RefreshCw className="w-3.5 h-3.5" /> ALTERACOES</button>
+                    <button onClick={() => setActiveTab('source')} className={`flex flex-1 items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-medium transition-all ${activeTab === 'source' ? 'border-slate-200/80 bg-white/85 text-primary-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.08] dark:text-primary-300 dark:shadow-none' : 'border-transparent text-slate-500 hover:border-slate-200/70 hover:bg-slate-50/80 hover:text-slate-700 dark:text-[var(--text-muted)] dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:hover:text-slate-300'}`}><Folder className="w-3.5 h-3.5" /> ARQUIVOS</button>
+                    <button onClick={() => setActiveTab('insights')} className={`flex flex-1 items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-medium transition-all ${activeTab === 'insights' ? 'border-slate-200/80 bg-white/85 text-primary-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.08] dark:text-primary-300 dark:shadow-none' : 'border-transparent text-slate-500 hover:border-slate-200/70 hover:bg-slate-50/80 hover:text-slate-700 dark:text-[var(--text-muted)] dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:hover:text-slate-300'}`}><BarChart3 className="w-3.5 h-3.5" /> INSIGHTS</button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 relative">
-                    {isCheckingOut && <div className="absolute inset-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center"><RefreshCw className="w-8 h-8 text-fiori-blue animate-spin mb-2" /><span className="text-sm font-medium text-slate-600 dark:text-slate-300">Checkout em andamento...</span></div>}
+                <div className="panel-list-body relative flex-1 overflow-y-auto">
+                    {isCheckingOut && <div className="absolute inset-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center"><RefreshCw className="w-8 h-8 text-primary-500 animate-spin mb-2" /><span className="text-sm font-medium text-slate-600 dark:text-slate-300">Checkout em andamento...</span></div>}
                     {activeTab === 'changes' ? (
-                        <div className="space-y-4">
+                        <div className="panel-stack-tight">
                             <div>
-                                <div className="flex justify-between items-center px-2 mb-2"><span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest pl-1">Staged ({stagedChanges.length})</span>{stagedChanges.length > 0 && <button onClick={unstageAll} className="text-[10px] text-fiori-link hover:underline">Unstage All</button>}</div>
-                                {stagedChanges.length === 0 ? <div className="px-3 py-6 text-center border-2 border-dashed border-slate-100 dark:border-slate-800 rounded-lg text-xs text-slate-400">Nenhum arquivo no stage</div> : <ul className="space-y-0.5">{stagedChanges.map(file => <li key={file.id} onClick={() => setSelectedFileId(file.id)} className={`flex items-center justify-between p-2 rounded cursor-pointer border border-transparent transition-all ${selectedFileId === file.id ? 'bg-blue-50 dark:bg-blue-500/10 border-blue-100 dark:border-blue-500/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'}`}><div className="flex items-center gap-2 overflow-hidden"><span className="text-slate-400">{selectedFileId === file.id ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}</span>{getStatusIcon(file.status)}<span className={`text-sm truncate font-mono ${selectedFileId === file.id ? 'text-fiori-blue dark:text-blue-400 font-medium' : 'text-slate-700 dark:text-slate-300'}`}>{file.file}</span></div><button onClick={(e) => { e.stopPropagation(); unstageFile(file.id); }} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-500"><ArrowDown className="w-3 h-3" /></button></li>)}</ul>}
+                                <div className="flex justify-between items-center px-2 mb-2"><span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest pl-1">Staged ({stagedChanges.length})</span>{stagedChanges.length > 0 && <button onClick={unstageAll} className="text-[10px] text-primary-600 dark:text-primary-300 hover:underline">Unstage All</button>}</div>
+                                {stagedChanges.length === 0 ? <div className="rounded-xl border-2 border-dashed border-slate-200/75 bg-slate-50/70 px-3 py-6 text-center text-xs text-slate-400 dark:border-slate-800 dark:bg-transparent">Nenhum arquivo no stage</div> : <ul className="panel-stack-tight">{stagedChanges.map(file => <li key={file.id} className={`panel-list-row flex items-center justify-between rounded-xl border transition-all ${selectedFileId === file.id ? 'border-blue-100 bg-blue-50/85 dark:border-blue-500/20 dark:bg-blue-500/10' : 'border-transparent hover:bg-slate-50/80 dark:hover:bg-slate-800/40'}`}><button type="button" onClick={() => setSelectedFileId(file.id)} className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg px-0.5 py-0.5 text-left focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-100/80 dark:focus-visible:ring-sky-500/20"><span className="text-slate-400">{selectedFileId === file.id ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}</span>{getStatusIcon(file.status)}<span className={`text-sm truncate font-mono ${selectedFileId === file.id ? 'font-medium text-primary-600 dark:text-primary-300' : 'text-slate-700 dark:text-slate-300'}`}>{file.file}</span></button><button onClick={() => unstageFile(file.id)} className="app-soft-icon-button rounded p-1 text-slate-500"><ArrowDown className="w-3 h-3" /></button></li>)}</ul>}
                             </div>
                             <div>
-                                <div className="flex justify-between items-center px-2 mb-2"><span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest pl-1">Changes ({changes.length})</span>{changes.length > 0 && <button onClick={stageAll} className="text-[10px] text-fiori-link hover:underline">Stage All</button>}</div>
-                                {changes.length === 0 ? <div className="px-2 py-8 text-center text-xs text-slate-400 italic">Diretório de trabalho limpo</div> : <ul className="space-y-0.5">{changes.map(file => <li key={file.id} onClick={() => setSelectedFileId(file.id)} className={`flex items-center justify-between p-2 rounded cursor-pointer border border-transparent transition-all ${selectedFileId === file.id ? 'bg-blue-50 dark:bg-blue-500/10 border-blue-100 dark:border-blue-500/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'}`}><div className="flex items-center gap-2 overflow-hidden"><span className="text-slate-400">{selectedFileId === file.id ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}</span>{getStatusIcon(file.status)}<span className={`text-sm truncate font-mono ${selectedFileId === file.id ? 'text-fiori-blue dark:text-blue-400 font-medium' : 'text-slate-700 dark:text-slate-300'}`}>{file.file}</span></div><button onClick={(e) => { e.stopPropagation(); stageFile(file.id); }} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-500"><ArrowUp className="w-3 h-3" /></button></li>)}</ul>}
+                                <div className="flex justify-between items-center px-2 mb-2"><span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest pl-1">Changes ({changes.length})</span>{changes.length > 0 && <button onClick={stageAll} className="text-[10px] text-primary-600 dark:text-primary-300 hover:underline">Stage All</button>}</div>
+                                {changes.length === 0 ? <div className="px-2 py-8 text-center text-xs italic text-slate-400">Diretório de trabalho limpo</div> : <ul className="panel-stack-tight">{changes.map(file => <li key={file.id} className={`panel-list-row flex items-center justify-between rounded-xl border transition-all ${selectedFileId === file.id ? 'border-blue-100 bg-blue-50/85 dark:border-blue-500/20 dark:bg-blue-500/10' : 'border-transparent hover:bg-slate-50/80 dark:hover:bg-slate-800/40'}`}><button type="button" onClick={() => setSelectedFileId(file.id)} className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg px-0.5 py-0.5 text-left focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-100/80 dark:focus-visible:ring-sky-500/20"><span className="text-slate-400">{selectedFileId === file.id ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}</span>{getStatusIcon(file.status)}<span className={`text-sm truncate font-mono ${selectedFileId === file.id ? 'font-medium text-primary-600 dark:text-primary-300' : 'text-slate-700 dark:text-slate-300'}`}>{file.file}</span></button><button onClick={() => stageFile(file.id)} className="app-soft-icon-button rounded p-1 text-slate-500"><ArrowUp className="w-3 h-3" /></button></li>)}</ul>}
                             </div>
                         </div>
                     ) : (
-                        <div className="h-full flex flex-col">
+                        <div className="flex h-full flex-col">
                             {/* Breadcrumb navigation */}
                             <div className="flex items-center gap-1 text-xs text-slate-500 mb-2 flex-wrap">
                                 <button
                                     onClick={() => loadDirectory('')}
-                                    className="hover:text-fiori-blue transition-colors font-mono"
+                                    className="hover:text-primary-600 dark:hover:text-primary-300 transition-colors font-mono"
                                 >
                                     /
                                 </button>
@@ -906,7 +1047,7 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
                                             <ChevronRight className="w-3 h-3 text-slate-300" />
                                             <button
                                                 onClick={() => loadDirectory(pathUpTo)}
-                                                className="hover:text-fiori-blue transition-colors font-mono"
+                                                className="hover:text-primary-600 dark:hover:text-primary-300 transition-colors font-mono"
                                             >
                                                 {part}
                                             </button>
@@ -923,7 +1064,7 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
                                             : '';
                                         loadDirectory(parent);
                                     }}
-                                    className="flex items-center gap-2 py-1.5 px-2 mb-1 text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors"
+                                    className="mb-1 flex items-center gap-2 rounded px-2 py-1.5 text-xs text-slate-500 transition-colors hover:bg-slate-100/80 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-100/80 dark:hover:bg-slate-800 dark:focus-visible:ring-sky-500/20"
                                 >
                                     <ChevronRight className="w-3 h-3 rotate-180" /> ..
                                 </button>
@@ -933,44 +1074,50 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
                                     <RefreshCw className="w-5 h-5 animate-spin mr-2" />
                                     Carregando arquivos...
                                 </div>
-                            ) : repoFiles.length === 0 ? (
-                                <div className="text-center py-8 text-slate-400 text-sm">
-                                    Diretório vazio.
-                                </div>
                             ) : (
-                                <div className="flex-1 overflow-y-auto">
-                                    {repoFiles.map((file) => (
-                                        <div
-                                            key={file.id}
-                                            onClick={() => {
-                                                if (file.type === 'folder') {
-                                                    loadDirectory(file.relativePath || file.name);
-                                                } else {
-                                                    setActiveFileNode(file);
-                                                }
-                                            }}
-                                            className={`flex items-center gap-2 py-1.5 px-2 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 rounded text-sm transition-colors ${activeFileNode?.id === file.id ? 'bg-blue-100 dark:bg-blue-900/30 text-fiori-blue' : 'text-slate-600 dark:text-slate-300'}`}
-                                        >
-                                            {file.type === 'folder' ? (
-                                                <Folder className="w-4 h-4 text-blue-400 flex-shrink-0" />
-                                            ) : (
-                                                <FileCode className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                                            )}
-                                            <span className="truncate font-mono text-xs">{file.name}</span>
-                                            {file.type === 'folder' && <ChevronRight className="w-3 h-3 ml-auto text-slate-300" />}
+                                <>
+                                    {repoFiles.length === 0 && (
+                                        <div className="text-center py-8 text-slate-400 text-sm">
+                                            Diretório vazio.
                                         </div>
-                                    ))}
-                                </div>
+                                    )}
+                                    {repoFiles.length > 0 && (
+                                        <div className="flex-1 overflow-y-auto panel-stack-tight">
+                                            {repoFiles.map((file) => (
+                                                <button
+                                                    key={file.id}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        if (file.type === 'folder') {
+                                                            loadDirectory(file.relativePath || file.name);
+                                                        } else {
+                                                            setActiveFileNode(file);
+                                                        }
+                                                    }}
+                                                    className={`panel-list-row flex w-full items-center gap-2 rounded text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-100/80 dark:focus-visible:ring-sky-500/20 ${activeFileNode?.id === file.id ? 'bg-blue-100/80 text-primary-600 dark:bg-blue-900/30 dark:text-primary-300' : 'text-slate-600 hover:bg-slate-100/80 dark:text-slate-300 dark:hover:bg-slate-800'}`}
+                                                >
+                                                    {file.type === 'folder' ? (
+                                                        <Folder className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                                                    ) : (
+                                                        <FileCode className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                                                    )}
+                                                    <span className="truncate font-mono text-xs">{file.name}</span>
+                                                    {file.type === 'folder' && <ChevronRight className="w-3 h-3 ml-auto text-slate-300" />}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </>
                             )}
                         </div>
                     )}
                 </div>
 
                 {activeTab === 'changes' && (
-                    <div className="border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/70">
+                    <div className="border-t border-slate-200 bg-slate-50/65 dark:border-white/10 dark:bg-white/[0.03]">
                         {/* Remote URL config panel */}
                         {isRemoteConfigOpen && (
-                            <div className="p-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 animate-in fade-in slide-in-from-bottom-2 duration-150">
+                            <div className="panel-body-compact animate-in fade-in slide-in-from-bottom-2 duration-150 border-b border-slate-200/80 bg-white/90 dark:border-slate-700 dark:bg-slate-900">
                                 <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1"><Link className="w-3 h-3" /> Remote URL (origin)</p>
                                 <div className="flex gap-2">
                                     <input
@@ -978,30 +1125,37 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
                                         value={remoteUrlInput}
                                         onChange={(e) => setRemoteUrlInput(e.target.value)}
                                         placeholder="https://github.com/user/repo.git"
-                                        className="flex-1 text-xs px-2 py-1.5 rounded border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-1 focus:ring-fiori-blue font-mono"
-                                        onKeyDown={(e) => { if (e.key === 'Enter') handleSaveRemote(); if (e.key === 'Escape') setIsRemoteConfigOpen(false); }}
+                                        className="flex-1 rounded border border-slate-300/80 bg-slate-50/80 px-2 py-1.5 font-mono text-xs shadow-sm shadow-slate-200/40 focus:outline-none focus:ring-1 focus:ring-primary-500/30 dark:border-slate-600 dark:bg-slate-800 dark:shadow-none"
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                handleSaveRemote();
+                                            }
+                                            if (e.key === 'Escape') {
+                                                setIsRemoteConfigOpen(false);
+                                            }
+                                        }}
                                     />
-                                    <button onClick={handleSaveRemote} className="px-2 py-1.5 bg-fiori-blue text-white text-xs rounded hover:bg-blue-600 font-medium">Salvar</button>
-                                    <button onClick={() => setIsRemoteConfigOpen(false)} className="px-2 py-1.5 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs rounded hover:opacity-80">✕</button>
+                                    <button onClick={handleSaveRemote} className="px-2 py-1.5 bg-primary-600 text-white text-xs rounded hover:bg-primary-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-100/80 dark:focus-visible:ring-sky-500/20 font-medium">Salvar</button>
+                                    <button onClick={() => setIsRemoteConfigOpen(false)} className="app-soft-icon-button rounded px-2 py-1.5 text-xs">✕</button>
                                 </div>
                             </div>
                         )}
-                        <div className="p-4">
+                            <div className="panel-body-compact">
                             <div className="relative">
-                                <textarea className="w-full h-20 p-3 pr-8 text-sm bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded resize-none focus:ring-2 focus:ring-fiori-blue focus:outline-none dark:text-slate-200 font-sans disabled:opacity-50" placeholder="Mensagem do commit..." value={commitMessage} onChange={(e) => setCommitMessage(e.target.value)} disabled={isGenerating}></textarea>
-                                <button onClick={generateCommitMessage} disabled={stagedChanges.length === 0 || isGenerating} className="absolute right-2 top-2 p-1.5 text-fiori-blue hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded transition-colors disabled:opacity-30" title="Gerar mensagem sugerida"><Sparkles className={`w-4 h-4 ${isGenerating ? 'animate-pulse' : ''}`} /></button>
+                                <textarea className="app-input h-24 w-full resize-none rounded-2xl px-3 py-2.5 pr-10 text-sm font-sans leading-6 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:opacity-50 dark:text-slate-200" placeholder="Mensagem do commit..." value={commitMessage} onChange={(e) => setCommitMessage(e.target.value)} disabled={isGenerating}></textarea>
+                                <button onClick={generateCommitMessage} disabled={stagedChanges.length === 0 || isGenerating} className="app-soft-icon-button absolute right-2 top-2 rounded-xl p-2 text-primary-600 dark:text-primary-300 disabled:opacity-30" title="Gerar mensagem sugerida"><Sparkles className={`w-4 h-4 ${isGenerating ? 'animate-pulse' : ''}`} /></button>
                             </div>
                             <div className="flex gap-2 mt-2">
-                                <button onClick={handleCommit} disabled={stagedChanges.length === 0 || !commitMessage.trim() || isGenerating} className="flex-1 bg-fiori-blue hover:bg-blue-700 text-white text-sm font-medium py-2 rounded flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm">
+                                <button onClick={handleCommit} disabled={stagedChanges.length === 0 || !commitMessage.trim() || isGenerating} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary-600 py-2.5 text-sm font-medium text-white transition-colors shadow-md shadow-primary-500/20 hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">
                                     <Check className="w-4 h-4" /> Commit
                                 </button>
-                                <button onClick={handlePush} disabled={isPushing || isPulling} title={remoteUrl ? `Push → ${remoteUrl}` : 'Configure o remote antes de fazer push'} className="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-3 py-2 rounded flex items-center gap-1.5 disabled:opacity-50 transition-colors shadow-sm">
+                                <button onClick={handlePush} disabled={isPushing || isPulling} title={remoteUrl ? `Push → ${remoteUrl}` : 'Configure o remote antes de fazer push'} className="flex items-center gap-1.5 rounded-xl bg-slate-700 px-3 py-2.5 text-sm font-medium text-white shadow-sm shadow-slate-300/40 transition-colors hover:-translate-y-0.5 hover:bg-slate-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-100/80 disabled:opacity-50 dark:shadow-none dark:focus-visible:ring-sky-500/20">
                                     {isPushing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ArrowUp className="w-4 h-4" />} Push
                                 </button>
-                                <button onClick={handlePull} disabled={isPulling || isPushing} title={remoteUrl ? `Pull ← ${remoteUrl}` : 'Configure o remote antes de fazer pull'} className="bg-slate-600 hover:bg-slate-500 text-white text-sm font-medium px-3 py-2 rounded flex items-center gap-1.5 disabled:opacity-50 transition-colors shadow-sm">
+                                <button onClick={handlePull} disabled={isPulling || isPushing} title={remoteUrl ? `Pull ← ${remoteUrl}` : 'Configure o remote antes de fazer pull'} className="flex items-center gap-1.5 rounded-xl bg-slate-600 px-3 py-2.5 text-sm font-medium text-white shadow-sm shadow-slate-300/40 transition-colors hover:-translate-y-0.5 hover:bg-slate-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-100/80 disabled:opacity-50 dark:shadow-none dark:focus-visible:ring-sky-500/20">
                                     {isPulling ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ArrowDown className="w-4 h-4" />} Pull
                                 </button>
-                                <button onClick={() => setIsRemoteConfigOpen(v => !v)} title="Configurar remote URL" className={`p-2 rounded border transition-colors ${remoteUrl ? 'border-emerald-300 dark:border-emerald-700 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20' : 'border-amber-300 dark:border-amber-700 text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20'}`}>
+                                <button onClick={() => setIsRemoteConfigOpen(v => !v)} title="Configurar remote URL" className={`app-soft-icon-button rounded-xl p-2.5 ${remoteUrl ? 'border-emerald-300 bg-emerald-50/80 text-emerald-600 shadow-sm shadow-emerald-100/60 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 dark:shadow-none' : 'border-amber-300 bg-amber-50/80 text-amber-600 shadow-sm shadow-amber-100/60 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-400 dark:shadow-none'}`}>
                                     <Settings2 className="w-4 h-4" />
                                 </button>
                             </div>
@@ -1014,36 +1168,46 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
                     </div>
                 )}
             </div>
-            <div className="hidden md:flex w-2 cursor-col-resize hover:bg-fiori-blue/50 items-center justify-center group transition-colors select-none" onMouseDown={startResizing}><div className={`w-0.5 h-8 bg-slate-300 dark:bg-slate-600 rounded-full group-hover:bg-white transition-colors ${isResizing ? 'bg-white' : ''}`}></div></div>
-            <div className="hidden md:flex flex-1 flex-col bg-fiori-cardLight dark:bg-fiori-cardDark rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden relative">
+            <button
+                type="button"
+                aria-label="Redimensionar painel"
+                onMouseDown={startResizing}
+                className="hidden md:flex w-2 cursor-col-resize hover:bg-primary-500/30 items-center justify-center group transition-colors select-none"
+            >
+                <div className={`w-0.5 h-8 bg-slate-300 dark:bg-slate-600 rounded-full group-hover:bg-white transition-colors ${isResizing ? 'bg-white' : ''}`}></div>
+            </button>
+            <div className="surface-card relative hidden flex-1 flex-col overflow-hidden rounded-[1.6rem] border border-slate-200/75 bg-white/90 shadow-sm shadow-slate-200/60 md:flex dark:border-white/10 dark:bg-transparent dark:shadow-none">
                 {isCheckingOut && <div className="absolute inset-0 bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm z-20 flex flex-col items-center justify-center"></div>}
-                {activeTab === 'changes' ? (
-                    activeFileObj ? (
-                        <>
-                            <div className="h-10 border-b border-slate-200 dark:border-slate-700 flex items-center px-4 bg-slate-50 dark:bg-slate-800/50 justify-between"><span className="text-sm font-mono text-slate-600 dark:text-slate-300 flex items-center gap-2"><FileCode className="w-4 h-4" />{activeFileObj.file}</span><span className="text-xs text-slate-400 flex items-center gap-2">Visualizando Diff</span></div>
-                            <div className="flex-1 overflow-auto bg-white dark:bg-slate-900 font-mono text-xs md:text-sm">
-                                {diffLines.map((line, idx) => (
-                                    <div key={idx} className={`flex ${line.type === 'add' ? 'bg-emerald-50/50 dark:bg-emerald-500/5' : line.type === 'del' ? 'bg-rose-50/50 dark:bg-rose-500/5' : ''} hover:bg-slate-50 dark:hover:bg-slate-800/20`}>
-                                        <div className="w-10 text-right pr-3 py-0.5 text-slate-300 dark:text-slate-600 select-none border-r border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 font-mono text-[10px] leading-5">{idx + 1}</div>
-                                        <div className="w-6 text-center py-0.5 select-none text-slate-300 dark:text-slate-600 font-mono text-[10px] leading-5">{line.type === 'add' ? '+' : line.type === 'del' ? '-' : ''}</div>
-                                        <div className={`flex-1 py-0.5 px-2 whitespace-pre break-words font-mono text-[12px] leading-5 ${line.type === 'add' ? 'text-emerald-800 dark:text-emerald-400' : line.type === 'del' ? 'text-rose-800 dark:text-rose-400 line-through decoration-rose-800/30 dark:decoration-rose-400/30 opacity-70' : 'text-slate-600 dark:text-slate-400'}`}>{line.content}</div>
+                {activeTab === 'changes' && activeFileObj && (
+                    <>
+                        <div className="panel-header-compact flex h-12 items-center justify-between border-b border-slate-200/80 bg-slate-50/60 dark:border-white/10 dark:bg-white/[0.03]"><span className="flex items-center gap-2 font-mono text-sm text-slate-600 dark:text-slate-300"><FileCode className="w-4 h-4" />{activeFileObj.file}</span><span className="flex items-center gap-2 text-xs text-slate-400">Visualizando diff</span></div>
+                        <div className="flex-1 overflow-auto bg-white/88 font-mono text-xs md:text-sm dark:bg-slate-900">
+                            {diffLines.map((line, idx) => {
+                                const lineNo = idx + 1;
+                                const marker = getDiffLineMarker(line.type);
+                                return (
+                                    <div key={`${line.type}-${line.content}-${lineNo}`} className={`flex ${getDiffLineBackgroundClass(line.type)} hover:bg-slate-50/80 dark:hover:bg-slate-800/20`}>
+                                        <div className="w-10 select-none border-r border-slate-100 bg-slate-50/65 py-0.5 pr-3 text-right font-mono text-[10px] leading-5 text-slate-300 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-600">{lineNo}</div>
+                                        <div className="w-6 text-center py-0.5 select-none text-slate-300 dark:text-slate-600 font-mono text-[10px] leading-5">{marker}</div>
+                                        <div className={`flex-1 py-0.5 px-2 whitespace-pre break-words font-mono text-[12px] leading-5 ${getDiffLineTextClass(line.type)}`}>{line.content}</div>
                                     </div>
-                                ))}
-                            </div>
-                        </>
-                    ) : <div className="flex-1 flex flex-col items-center justify-center text-slate-400"><GitBranch className="w-16 h-16 mb-4 opacity-20" /><p>Selecione um arquivo alterado para ver as diferenças.</p></div>
-                ) : (
-                    activeFileNode && selectedRepoId ? (
-                        <FileViewer node={activeFileNode} repoId={selectedRepoId} />
-                    ) : (
-                        <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
-                            <FolderOpen className="w-16 h-16 mb-4 opacity-20" />
-                            <p>Selecione um arquivo na árvore para visualizar o código.</p>
+                                );
+                            })}
                         </div>
-                    )
+                    </>
                 )}
-            </div >
-        </div >
+                {activeTab === 'changes' && !activeFileObj && <div className="flex-1 flex flex-col items-center justify-center text-slate-400"><GitBranch className="w-16 h-16 mb-4 opacity-20" /><p>Selecione um arquivo alterado para ver as diferenças.</p></div>}
+                {activeTab === 'source' && activeFileNode && selectedRepoId && <FileViewer node={activeFileNode} repoId={selectedRepoId} />}
+                {activeTab === 'source' && (!activeFileNode || !selectedRepoId) && (
+                    <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
+                        <FolderOpen className="w-16 h-16 mb-4 opacity-20" />
+                        <p>Selecione um arquivo na árvore para visualizar o código.</p>
+                    </div>
+                )}
+            </div>
+            </div>
+            </div>
+        </div>
     );
 };
 
@@ -1073,15 +1237,15 @@ const FileViewer: React.FC<{ node: FileNode; repoId: string }> = ({ node, repoId
 
     if (loading) {
         return (
-            <div className="flex-1 flex items-center justify-center bg-white dark:bg-slate-900">
-                <RefreshCw className="w-6 h-6 text-fiori-blue animate-spin" />
+            <div className="flex-1 flex items-center justify-center bg-white/88 dark:bg-slate-900">
+                <RefreshCw className="w-6 h-6 text-primary-500 animate-spin" />
             </div>
         );
     }
 
     if (error) {
         return (
-            <div className="flex-1 flex items-center justify-center bg-white dark:bg-slate-900 text-red-500">
+            <div className="flex-1 flex items-center justify-center bg-white/88 dark:bg-slate-900 text-red-500">
                 <p>{content}</p>
             </div>
         );

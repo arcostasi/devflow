@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Repository, Task } from '../types';
 import { ArrowLeft, GitBranch, Clock, AlertCircle, Copy, FileText, Code2, GitPullRequest, Star, Eye, Folder, X, Save, Edit3, GitCommit, Settings, AlertTriangle, Trash2 } from 'lucide-react';
 import Avatar from './Avatar';
@@ -10,6 +10,7 @@ interface RepoFile {
     name: string;
     type: 'file' | 'directory';
     modifiedAt: string;
+    relativePath?: string;
 }
 
 interface Commit {
@@ -30,6 +31,42 @@ interface RepoDetailProps {
     addToast: (title: string, type: 'success' | 'error' | 'info', desc?: string) => void;
     onDeleteRepo?: (id: string) => void;
 }
+
+const getRepoStatusLabel = (status: Repository['status']) => {
+    if (status === 'active') return 'Operando';
+    if (status === 'error') return 'Falha';
+    return 'Arquivado';
+};
+
+const getRepoStatusClassName = (status: Repository['status']) => {
+    if (status === 'active') {
+        return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/[0.1] dark:text-emerald-300';
+    }
+
+    if (status === 'error') {
+        return 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/20 dark:bg-red-500/[0.1] dark:text-red-300';
+    }
+
+    return 'border-slate-200 bg-slate-50 text-slate-700 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300';
+};
+
+const getTaskPriorityClassName = (priority: Task['priority']) => {
+    if (priority === 'high') return 'text-red-600 dark:text-red-300';
+    if (priority === 'medium') return 'text-amber-600 dark:text-amber-300';
+    return 'text-blue-600 dark:text-blue-300';
+};
+
+const getTaskStatusLabel = (status: Task['status']) => {
+    if (status === 'todo') return 'A Fazer';
+    if (status === 'doing') return 'Em Progresso';
+    if (status === 'review') return 'Revisao';
+    if (status === 'ready') return 'Pronto';
+    if (status === 'done') return 'Concluido';
+    return 'Backlog';
+};
+
+const detailInsetCard =
+    'rounded-2xl border border-slate-200/75 bg-slate-50/78 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.82)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none';
 
 const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigateToTask, addToast, onDeleteRepo }) => {
     const { confirm } = useConfirm();
@@ -79,13 +116,13 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
     };
 
     // Carregar arquivos
-    const loadFiles = async (): Promise<boolean> => {
+    const loadFiles = async (): Promise<RepoFile[] | null> => {
         try {
             setLoading(true);
             const data = await api.getRepoFiles(repo.id);
             setFiles(data.files);
             setLocalPath(data.localPath || '');
-            return true;
+            return data.files;
         } catch (error: any) {
             const msg: string = error?.message || '';
             if (msg.includes('não encontrado') || msg.includes('not found') || msg.includes('ENOENT')) {
@@ -94,7 +131,7 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                 console.error('Erro ao carregar arquivos:', error);
                 addToast('Falha ao Carregar Arquivos', 'error', msg || 'Não foi possível listar os arquivos do repositório.');
             }
-            return false;
+            return null;
         } finally {
             setLoading(false);
         }
@@ -114,20 +151,21 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
     };
 
     // Carregar README
-    const loadReadme = async () => {
+    const loadReadme = async (repoFiles: RepoFile[] = files) => {
+        const readmeFile = repoFiles.find((file) => file.type === 'file' && /^readme(\.[^.]+)?$/i.test(file.name));
+
+        if (!readmeFile) {
+            setReadmeContent('');
+            setLoadingReadme(false);
+            return;
+        }
+
         try {
             setLoadingReadme(true);
-            // Tentar carregar README.md
-            const data = await api.getRepoFileContent(repo.id, 'README.md');
+            const data = await api.getRepoFileContent(repo.id, readmeFile.relativePath || readmeFile.name);
             setReadmeContent(data.content);
-        } catch (_error) {
-            // Se não encontrar README.md, tentar readme.md
-            try {
-                const data = await api.getRepoFileContent(repo.id, 'readme.md');
-                setReadmeContent(data.content);
-            } catch {
-                setReadmeContent('');
-            }
+        } catch {
+            setReadmeContent('');
         } finally {
             setLoadingReadme(false);
         }
@@ -135,10 +173,10 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
 
     useEffect(() => {
         setPathMissing(false);
-        loadFiles().then(ok => {
-            if (ok) {
+        loadFiles().then(loadedFiles => {
+            if (loadedFiles) {
                 loadCommits();
-                loadReadme();
+                loadReadme(loadedFiles);
             } else {
                 setLoadingCommits(false);
                 setLoadingReadme(false);
@@ -168,7 +206,11 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
     };
 
     // Filtrar tarefas vinculadas a este repositório
-    const repoTasks = tasks.filter(t => t.repositoryId === repo.id);
+    const repoTasks = useMemo(() => tasks.filter(t => t.repositoryId === repo.id), [tasks, repo.id]);
+    const openTaskCount = useMemo(() => repoTasks.filter(t => t.status !== 'done').length, [repoTasks]);
+    const reviewTaskCount = useMemo(() => repoTasks.filter(t => t.status === 'review').length, [repoTasks]);
+    const fileCount = useMemo(() => files.filter(f => f.type === 'file').length, [files]);
+    const directoryCount = useMemo(() => files.filter(f => f.type === 'directory').length, [files]);
 
     // Abrir arquivo para visualização
     const handleOpenFile = async (fileName: string) => {
@@ -279,19 +321,22 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
     };
 
     return (
-        <div className="p-6 max-w-7xl mx-auto h-full flex flex-col">
+        <div className="page-shell min-h-full">
+            <div className="page-container page-stack">
             {/* Missing path banner */}
             {pathMissing && (
-                <div className="mb-6 p-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50">
-                    <div className="flex items-start gap-3">
-                        <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                <div className="surface-card rounded-[1.35rem] border border-amber-200 bg-amber-50/80 p-5 dark:border-amber-500/20 dark:bg-amber-500/[0.08]">
+                    <div className="flex flex-wrap items-start gap-4">
+                        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-100 text-amber-700 dark:bg-amber-500/[0.14] dark:text-amber-300">
+                            <AlertTriangle className="h-5 w-5" />
+                        </div>
                         <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">Diretório não encontrado</p>
+                            <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">Diretorio local nao encontrado</p>
                             {repo.localPath && (
-                                <p className="text-xs text-amber-600 dark:text-amber-500 font-mono mt-0.5 break-all">{repo.localPath}</p>
+                                <p className="mt-1 break-all font-mono text-xs text-amber-700/80 dark:text-amber-300/80">{repo.localPath}</p>
                             )}
-                            <p className="text-xs text-amber-600/80 dark:text-amber-500/80 mt-1">
-                                O diretório local foi removido ou movido. Remova este repositório do sistema ou restaure o diretório.
+                            <p className="mt-2 text-sm leading-6 text-amber-800/80 dark:text-amber-200/80">
+                                O caminho local foi removido ou movido. Sem esse diretorio, leitura de arquivos, commits e operacao local ficam indisponiveis.
                             </p>
                         </div>
                         {onDeleteRepo && (
@@ -301,9 +346,9 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                                     onDeleteRepo(repo.id);
                                     onBack();
                                 }}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 dark:bg-amber-800/30 dark:hover:bg-amber-800/50 text-amber-700 dark:text-amber-400 text-xs font-semibold rounded border border-amber-200 dark:border-amber-700/50 transition-colors flex-shrink-0"
+                                className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-white/70 px-4 py-2.5 text-sm font-medium text-amber-800 transition-colors hover:bg-white dark:border-amber-500/30 dark:bg-black/10 dark:text-amber-200"
                             >
-                                <Trash2 className="w-3.5 h-3.5" /> Remover do Sistema
+                                <Trash2 className="h-4 w-4" /> Remover do sistema
                             </button>
                         )}
                     </div>
@@ -311,44 +356,44 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
             )}
 
             {/* Header */}
-            <div className="mb-6">
+            <section className="page-panel-grid xl:grid-cols-12">
+                <div className="surface-card overflow-visible rounded-[1.6rem] xl:col-span-7">
+                    <div className="panel-header-block border-b border-slate-200/70 bg-slate-50/45 dark:border-white/10 dark:bg-transparent">
                 <button
                     onClick={onBack}
-                    className="flex items-center gap-1 text-sm text-slate-500 hover:text-fiori-blue mb-4 transition-colors"
+                    className="mb-4 inline-flex items-center gap-2 text-sm text-slate-500 transition-colors hover:text-primary-600 dark:text-[var(--text-muted)] dark:hover:text-primary-300"
                 >
-                    <ArrowLeft className="w-4 h-4" /> Voltar para Repositórios
+                    <ArrowLeft className="h-4 w-4" /> Voltar para repositorios
                 </button>
 
-                <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-                    <div>
-                        <div className="flex items-center gap-3">
-                            <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">{repo.name}</h1>
-                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${repo.status === 'active'
-                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20'
-                                : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
-                                }`}>
-                                {repo.status === 'active' ? 'Public' : 'Archived'}
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="max-w-2xl">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <p className="app-section-label">Operacao Tecnica</p>
+                            <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${getRepoStatusClassName(repo.status)}`}>
+                                {getRepoStatusLabel(repo.status)}
                             </span>
                         </div>
-                        <p className="text-slate-600 dark:text-slate-400 mt-2 max-w-2xl text-sm leading-relaxed">
-                            {repo.description || 'Sem descrição.'}
+                        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 dark:text-[var(--text-primary)]">{repo.name}</h1>
+                        <p className="app-copy mt-2 max-w-2xl">
+                            {repo.description || 'Repositorio sem descricao registrada. Defina contexto tecnico e responsabilidade do servico para melhorar a leitura operacional.'}
                         </p>
 
-                        <div className="flex items-center gap-6 mt-4 text-xs font-medium text-slate-500 dark:text-slate-500">
-                            <div className="flex items-center gap-1.5 hover:text-fiori-blue transition-colors cursor-default">
-                                <GitBranch className="w-3.5 h-3.5" />
+                        <div className="app-meta-row mt-4 gap-4">
+                            <div className="flex items-center gap-1.5">
+                                <GitBranch className="h-3.5 w-3.5" />
                                 <span className="font-mono">{repo.branch}</span>
                             </div>
                             <div className="flex items-center gap-1.5">
-                                <Clock className="w-3.5 h-3.5" />
+                                <Clock className="h-3.5 w-3.5" />
                                 <span>Atualizado {commits.length > 0 ? commits[0].relativeDate : formatLastUpdated(repo.lastUpdated)}</span>
                             </div>
                             <div className="flex items-center gap-1.5">
-                                <Star className="w-3.5 h-3.5" />
+                                <Star className="h-3.5 w-3.5" />
                                 <span>0 stars</span>
                             </div>
                             <div className="flex items-center gap-1.5">
-                                <Eye className="w-3.5 h-3.5" />
+                                <Eye className="h-3.5 w-3.5" />
                                 <span>{repo.stars || 0} watching</span>
                             </div>
                         </div>
@@ -357,38 +402,38 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                     <div className="relative">
                         <button
                             onClick={() => setShowCodeDropdown(!showCodeDropdown)}
-                            className="flex items-center gap-2 px-4 py-2 bg-fiori-blue hover:bg-blue-700 text-white rounded-md text-sm font-medium transition-colors shadow-sm"
+                            className="inline-flex items-center gap-2 rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg shadow-primary-900/15 transition-colors hover:bg-primary-700"
                         >
-                            <Code2 className="w-4 h-4" /> Code
+                            <Code2 className="h-4 w-4" /> Acoes de codigo
                         </button>
                         {showCodeDropdown && (
-                            <div className="absolute right-0 mt-2 w-72 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 z-50">
-                                <div className="p-4">
-                                    <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3">Caminho Local</h4>
-                                    <div className="bg-slate-100 dark:bg-slate-900 rounded p-2 font-mono text-xs text-slate-600 dark:text-slate-400 break-all mb-3">
-                                        {localPath || 'Não disponível'}
+                            <div className="app-flyout absolute right-0 z-50 mt-3 w-80 rounded-2xl p-4">
+                                <div>
+                                    <h4 className="text-sm font-semibold text-slate-800 dark:text-white">Caminho local</h4>
+                                    <div className="mt-3 rounded-2xl border border-slate-200/80 bg-slate-50/80 p-3 font-mono text-xs text-slate-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.04] dark:text-[var(--text-muted)] dark:shadow-none">
+                                        {localPath || 'Nao disponivel'}
                                     </div>
-                                    <div className="space-y-2">
+                                    <div className="mt-3 space-y-2">
                                         <button
                                             onClick={handleCopyPath}
-                                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors"
+                                            className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100/85 dark:text-slate-200 dark:hover:bg-white/[0.04]"
                                         >
-                                            <Copy className="w-4 h-4" />
-                                            Copiar Caminho
+                                            <Copy className="h-4 w-4" />
+                                            Copiar caminho
                                         </button>
                                         <button
                                             onClick={handleOpenInExplorer}
-                                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors"
+                                            className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100/85 dark:text-slate-200 dark:hover:bg-white/[0.04]"
                                         >
-                                            <Folder className="w-4 h-4" />
-                                            Copiar Comando Explorer
+                                            <Folder className="h-4 w-4" />
+                                            Copiar comando Explorer
                                         </button>
                                     </div>
                                 </div>
-                                <div className="border-t border-slate-200 dark:border-slate-700 px-4 py-2">
+                                <div className="mt-3 border-t border-slate-200 pt-3 dark:border-white/10">
                                     <button
                                         onClick={() => setShowCodeDropdown(false)}
-                                        className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                                        className="text-xs text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-300"
                                     >
                                         Fechar
                                     </button>
@@ -397,35 +442,97 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                         )}
                     </div>
                 </div>
-            </div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 px-6 py-5 md:grid-cols-3">
+                        <div className={detailInsetCard}>
+                            <p className="app-metric-label">Branch atual</p>
+                            <p className="mt-3 font-mono text-lg font-semibold text-slate-900 dark:text-[var(--text-primary)]">{repo.branch}</p>
+                            <p className="app-copy-compact mt-2">Atualizado {commits.length > 0 ? commits[0].relativeDate : formatLastUpdated(repo.lastUpdated)}</p>
+                        </div>
+                        <div className={detailInsetCard}>
+                            <p className="app-metric-label">Arquivos visiveis</p>
+                            <p className="mt-3 text-3xl font-light text-slate-900 dark:text-[var(--text-primary)]">{fileCount}</p>
+                            <p className="app-copy-compact mt-2">{directoryCount} diretorios carregados na raiz atual.</p>
+                        </div>
+                        <div className={detailInsetCard}>
+                            <p className="app-metric-label">Risco operacional</p>
+                            <p className={`mt-3 text-3xl font-light ${openTaskCount > 0 ? 'text-amber-600 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-300'}`}>{openTaskCount}</p>
+                            <p className="app-copy-compact mt-2">Issues abertas vinculadas ao repositorio.</p>
+                        </div>
+                    </div>
+                </div>
+                <div className="surface-card panel-body-block rounded-[1.6rem] xl:col-span-5">
+                    <p className="app-section-label">Leitura Rapida</p>
+                    <div className="mt-4 space-y-3.5">
+                        <div className={detailInsetCard}>
+                            <div className="flex items-start gap-3">
+                                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 dark:bg-blue-500/[0.12] dark:text-blue-300">
+                                    <GitCommit className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-semibold text-slate-900 dark:text-[var(--text-primary)]">Ultimo movimento</h3>
+                                    <p className="app-copy-compact mt-1">
+                                        {commits.length > 0 ? commits[0].message : 'Ainda nao existem commits disponiveis para leitura nesta tela.'}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <div className={detailInsetCard}>
+                            <div className="flex items-start gap-3">
+                                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-50 text-amber-600 dark:bg-amber-500/[0.12] dark:text-amber-300">
+                                    <AlertCircle className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-semibold text-slate-900 dark:text-[var(--text-primary)]">Fluxo de tarefas</h3>
+                                    <p className="app-copy-compact mt-1">
+                                        {reviewTaskCount > 0 ? `${reviewTaskCount} item(ns) em revisao exigem acompanhamento antes de merge ou release.` : 'Nenhum item em revisao no momento.'}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <div className={detailInsetCard}>
+                            <div className="flex items-start gap-3">
+                                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-600 dark:bg-white/[0.05] dark:text-slate-300">
+                                    <Eye className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-semibold text-slate-900 dark:text-[var(--text-primary)]">Acompanhamento</h3>
+                                    <p className="app-copy-compact mt-1">
+                                        {repo.stars || 0} watchers e {repoTasks.length} tarefa(s) ligadas ao contexto deste repositorio.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
 
             {/* Tabs */}
-            <div className="border-b border-slate-200 dark:border-slate-800 mb-6">
-                <nav className="-mb-px flex space-x-6">
+            <div className="page-tabs">
+                <nav className="flex flex-wrap gap-2">
                     <button
                         onClick={() => setActiveTab('code')}
-                        className={`pb-3 px-1 border-b-[3px] font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'code' ? 'border-fiori-blue text-fiori-blue' : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                        className={`rounded-xl border px-4 py-2.5 text-sm font-medium transition-all ${activeTab === 'code' ? 'border-slate-200/80 bg-white/85 text-primary-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.08] dark:text-primary-300 dark:shadow-none' : 'border-transparent text-slate-500 hover:border-slate-200/70 hover:bg-slate-50/80 hover:text-slate-700 dark:text-[var(--text-muted)] dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:hover:text-white'}`}
                     >
-                        <Code2 className="w-4 h-4" /> Código
+                        <span className="inline-flex items-center gap-2"><Code2 className="h-4 w-4" /> Codigo</span>
                     </button>
                     <button
                         onClick={() => setActiveTab('issues')}
-                        className={`pb-3 px-1 border-b-[3px] font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'issues' ? 'border-fiori-blue text-fiori-blue' : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                        className={`rounded-xl border px-4 py-2.5 text-sm font-medium transition-all ${activeTab === 'issues' ? 'border-slate-200/80 bg-white/85 text-primary-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.08] dark:text-primary-300 dark:shadow-none' : 'border-transparent text-slate-500 hover:border-slate-200/70 hover:bg-slate-50/80 hover:text-slate-700 dark:text-[var(--text-muted)] dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:hover:text-white'}`}
                     >
-                        <AlertCircle className="w-4 h-4" /> Issues
-                        <span className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded-full text-xs">{repoTasks.length}</span>
+                        <span className="inline-flex items-center gap-2"><AlertCircle className="h-4 w-4" /> Issues <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs dark:bg-white/[0.05]">{repoTasks.length}</span></span>
                     </button>
                     <button
                         disabled
-                        className="pb-3 px-1 border-b-[3px] border-transparent font-medium text-sm flex items-center gap-2 text-slate-300 dark:text-slate-600 cursor-not-allowed"
+                        className="rounded-xl px-4 py-2.5 text-sm font-medium text-slate-300 dark:text-slate-600 cursor-not-allowed"
                     >
-                        <GitPullRequest className="w-4 h-4" /> Pull Requests
+                        <span className="inline-flex items-center gap-2"><GitPullRequest className="h-4 w-4" /> Pull Requests</span>
                     </button>
                     <button
                         onClick={() => setActiveTab('settings')}
-                        className={`pb-3 px-1 border-b-[3px] font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'settings' ? 'border-fiori-blue text-fiori-blue' : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                        className={`rounded-xl border px-4 py-2.5 text-sm font-medium transition-all ${activeTab === 'settings' ? 'border-slate-200/80 bg-white/85 text-primary-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.08] dark:text-primary-300 dark:shadow-none' : 'border-transparent text-slate-500 hover:border-slate-200/70 hover:bg-slate-50/80 hover:text-slate-700 dark:text-[var(--text-muted)] dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:hover:text-white'}`}
                     >
-                        <Settings className="w-4 h-4" /> Configurações
+                        <span className="inline-flex items-center gap-2"><Settings className="h-4 w-4" /> Configuracoes</span>
                     </button>
                 </nav>
             </div>
@@ -433,81 +540,102 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
             {/* Content */}
             <div className="flex-1">
                 {activeTab === 'code' && (
-                    <div className="space-y-6">
-                        <div className="bg-white dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700/50 rounded-lg overflow-hidden shadow-sm">
-                            <div className="px-4 py-3 bg-slate-50/80 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-700/50 flex items-center justify-between backdrop-blur-sm">
+                    <div className="page-panel-grid xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,0.9fr)]">
+                        <div className="surface-card overflow-hidden rounded-[1.6rem]">
+                            <div className="surface-header panel-header-compact flex flex-wrap items-center justify-between gap-4">
+                                <div>
+                                    <p className="app-metric-label">Workspace local</p>
+                                    <h3 className="mt-1 text-base font-semibold text-slate-900 dark:text-white">Arquivos da raiz do repositorio</h3>
+                                </div>
                                 {loadingCommits ? (
                                     <div className="flex items-center gap-2 text-sm text-slate-400">
-                                        <div className="animate-pulse w-6 h-6 bg-slate-200 dark:bg-slate-700 rounded-full"></div>
+                                        <div className="h-8 w-8 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700"></div>
                                         <span>Carregando commits...</span>
                                     </div>
                                 ) : commits.length > 0 ? (
-                                    <>
-                                        <div className="flex items-center gap-2 text-sm">
+                                    <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-3 py-2 text-xs shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
+                                        <div className="flex items-center gap-2">
                                             <Avatar name={commits[0].author} size="sm" />
-                                            <span className="font-semibold text-slate-700 dark:text-slate-200">{commits[0].author}</span>
-                                            <span className="text-slate-500 truncate max-w-md">{commits[0].message}</span>
+                                            <div className="min-w-0">
+                                                <p className="font-semibold text-slate-700 dark:text-slate-200">{commits[0].author}</p>
+                                                <p className="truncate text-slate-500 dark:text-[var(--text-muted)]">{commits[0].message}</p>
+                                            </div>
                                         </div>
-                                        <div className="flex items-center gap-2 text-xs font-mono text-slate-500">
-                                            <span className="text-fiori-blue">{commits[0].hash}</span>
-                                            <span>{commits[0].relativeDate}</span>
-                                        </div>
-                                    </>
+                                    </div>
                                 ) : (
                                     <div className="flex items-center gap-2 text-sm text-slate-400">
-                                        <GitCommit className="w-4 h-4" />
+                                        <GitCommit className="h-4 w-4" />
                                         <span>Sem commits ainda</span>
                                     </div>
                                 )}
                             </div>
-                            <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                            <div className="divide-y divide-slate-100 dark:divide-white/10">
                                 {loading ? (
-                                    <div className="px-4 py-8 text-center text-slate-400 text-sm">
-                                        Carregando arquivos...
-                                    </div>
+                                    <div className="px-5 py-10 text-center text-sm text-slate-400">Carregando arquivos...</div>
                                 ) : files.length === 0 ? (
-                                    <div className="px-4 py-8 text-center text-slate-400 text-sm">
-                                        Nenhum arquivo encontrado no repositório.
+                                    <div className="surface-empty m-4 rounded-2xl px-5 py-10 text-center text-sm text-slate-400">
+                                        Nenhum arquivo encontrado no repositorio.
                                     </div>
                                 ) : (
                                     files.map((file, i) => {
                                         const timeAgo = new Date(file.modifiedAt).toLocaleDateString('pt-BR');
                                         return (
-                                            <div
+                                            <button
                                                 key={i}
-                                                className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/40 cursor-pointer group transition-colors border-b border-transparent hover:border-slate-100 dark:hover:border-slate-700/50"
+                                                type="button"
+                                                className="flex w-full items-center justify-between gap-4 px-5 py-3 text-left transition-colors hover:bg-slate-50/85 dark:hover:bg-white/[0.03]"
                                                 onClick={() => file.type === 'file' && handleOpenFile(file.name)}
-                                                title={file.type === 'file' ? 'Clique para visualizar/editar' : 'Diretório'}
+                                                title={file.type === 'file' ? 'Clique para visualizar ou editar' : 'Diretorio'}
                                             >
-                                                <div className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                                                <div className="flex min-w-0 items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
                                                     {file.type === 'directory' ? (
-                                                        <Folder className="w-4 h-4 text-blue-400 fill-blue-400/20" />
+                                                        <Folder className="h-4 w-4 flex-shrink-0 text-blue-400" />
                                                     ) : (
-                                                        <FileText className="w-4 h-4 text-slate-400" />
+                                                        <FileText className="h-4 w-4 flex-shrink-0 text-slate-400" />
                                                     )}
-                                                    <span className={`${file.type === 'file' ? 'group-hover:text-fiori-blue group-hover:underline' : ''}`}>{file.name}</span>
+                                                    <span className={`truncate ${file.type === 'file' ? 'hover:text-primary-600 dark:hover:text-primary-300' : ''}`}>{file.name}</span>
                                                 </div>
-                                                <span className="text-xs text-slate-400">{timeAgo}</span>
-                                            </div>
+                                                <span className="flex-shrink-0 text-xs text-slate-400">{timeAgo}</span>
+                                            </button>
                                         );
                                     })
                                 )}
                             </div>
                         </div>
 
-                        <div className="bg-white dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700/50 rounded-lg overflow-hidden shadow-sm">
-                            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 flex items-center gap-2 sticky top-0">
-                                <FileText className="w-4 h-4 text-slate-400" />
-                                <h3 className="font-semibold text-sm text-slate-700 dark:text-slate-200">README.md</h3>
+                        <div className="panel-stack">
+                            <div className="surface-card overflow-hidden rounded-[1.6rem]">
+                                <div className="surface-header panel-header-compact flex items-center gap-2">
+                                    <FileText className="h-4 w-4 text-slate-400" />
+                                    <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">README.md</h3>
+                                </div>
+                                <div className="max-h-[32rem] overflow-auto p-6 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                                    {loadingReadme ? (
+                                        <p className="text-slate-400">Carregando README...</p>
+                                    ) : readmeContent ? (
+                                        <pre className="whitespace-pre-wrap font-sans text-sm leading-7">{readmeContent}</pre>
+                                    ) : (
+                                        <div className="surface-empty rounded-2xl px-5 py-10 text-center text-sm italic text-slate-400">
+                                            Nenhum arquivo README.md encontrado neste repositorio.
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-                            <div className="p-8 prose dark:prose-invert max-w-none text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-                                {loadingReadme ? (
-                                    <p className="text-slate-400">Carregando README...</p>
-                                ) : readmeContent ? (
-                                    <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">{readmeContent}</pre>
-                                ) : (
-                                    <p className="text-slate-400 italic">Nenhum arquivo README.md encontrado neste repositório.</p>
-                                )}
+
+                            <div className="surface-card rounded-[1.6rem] p-5">
+                                <p className="app-metric-label">Sinais tecnicos</p>
+                                <div className="mt-4 space-y-3.5">
+                                    <div className={detailInsetCard}>
+                                        <p className="text-sm font-semibold text-slate-900 dark:text-white">Ultimo hash</p>
+                                        <p className="mt-2 font-mono text-sm text-primary-600 dark:text-primary-300">{commits[0]?.hash || 'Sem hash disponivel'}</p>
+                                    </div>
+                                    <div className={detailInsetCard}>
+                                        <p className="text-sm font-semibold text-slate-900 dark:text-white">Acompanhamento</p>
+                                        <p className="app-copy-compact mt-2">
+                                            {openTaskCount > 0 ? `${openTaskCount} tarefas abertas ligadas ao repositorio pedem alinhamento entre codigo e fluxo do board.` : 'Nao ha tarefas abertas vinculadas no momento.'}
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -516,41 +644,41 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                 {activeTab === 'issues' && (
                     <div className="space-y-4">
                         {repoTasks.length === 0 ? (
-                            <div className="text-center py-12 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-dashed border-slate-300 dark:border-slate-700">
-                                <AlertCircle className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                                <h3 className="text-sm font-medium text-slate-600 dark:text-slate-300">Nenhuma tarefa vinculada</h3>
-                                <p className="text-xs text-slate-400 mt-1">Crie tarefas no quadro Kanban e vincule a este repositório.</p>
+                            <div className="surface-empty rounded-[1.6rem] px-6 py-14 text-center">
+                                <AlertCircle className="mx-auto mb-4 h-10 w-10 text-slate-300 dark:text-slate-500" />
+                                <h3 className="text-base font-medium text-slate-700 dark:text-slate-200">Nenhuma tarefa vinculada</h3>
+                                <p className="mt-2 text-sm text-slate-500 dark:text-[var(--text-muted)]">Crie tarefas no Kanban e associe este repositorio para acompanhar risco e entrega no mesmo contexto.</p>
                             </div>
                         ) : (
                             repoTasks.map(task => (
                                 <div
                                     key={task.id}
                                     onClick={() => onNavigateToTask(task)}
-                                    className="bg-fiori-cardLight dark:bg-fiori-cardDark p-4 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-fiori-blue dark:hover:border-fiori-blue transition-all cursor-pointer group shadow-sm"
+                                    className="surface-card group cursor-pointer rounded-[1.35rem] border border-slate-200/75 bg-white/88 p-5 shadow-sm shadow-slate-200/60 transition-all hover:-translate-y-0.5 hover:border-primary-500/20 hover:shadow-lg hover:shadow-slate-200/70 dark:border-white/10 dark:bg-transparent dark:shadow-none dark:hover:shadow-xl"
                                 >
-                                    <div className="flex justify-between items-start">
+                                    <div className="flex flex-wrap items-start justify-between gap-4">
                                         <div className="flex gap-3">
-                                            <div className={`mt-0.5 ${task.status === 'done' ? 'text-emerald-500' : 'text-emerald-600'}`}>
-                                                <AlertCircle className="w-5 h-5" />
+                                            <div className={`mt-0.5 ${task.status === 'done' ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                                <AlertCircle className="h-5 w-5" />
                                             </div>
                                             <div>
-                                                <h4 className="font-semibold text-slate-800 dark:text-slate-200 group-hover:text-fiori-blue transition-colors">
+                                                <h4 className="font-semibold text-slate-800 transition-colors group-hover:text-primary-600 dark:text-slate-200 dark:group-hover:text-primary-300">
                                                     {task.title}
                                                 </h4>
-                                                <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                                    <span>#{task.id} aberto por {task.assignee?.name || 'Desconhecido'}</span>
+                                                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-[var(--text-muted)]">
+                                                    <span>#{task.id}</span>
                                                     <span>•</span>
-                                                    <span className={`uppercase font-bold ${task.priority === 'high' ? 'text-red-500' :
-                                                        task.priority === 'medium' ? 'text-amber-500' : 'text-blue-500'
-                                                        }`}>{task.priority}</span>
+                                                    <span>{task.assignee?.name || 'Sem responsavel'}</span>
                                                     <span>•</span>
-                                                    <span className="capitalize">{task.status === 'todo' ? 'A Fazer' : task.status === 'doing' ? 'Em Progresso' : task.status === 'review' ? 'Revisão' : 'Concluído'}</span>
+                                                    <span className={`font-semibold uppercase ${getTaskPriorityClassName(task.priority)}`}>{task.priority}</span>
+                                                    <span>•</span>
+                                                    <span>{getTaskStatusLabel(task.status)}</span>
                                                 </div>
                                             </div>
                                         </div>
-                                        <div className="flex gap-1">
+                                        <div className="flex flex-wrap gap-2">
                                             {task.tags.map(tag => (
-                                                <span key={tag} className="text-xs px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-full">
+                                                <span key={tag} className="rounded-full border border-slate-200/80 bg-slate-50/80 px-2.5 py-1 text-xs text-slate-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:shadow-none">
                                                     {tag}
                                                 </span>
                                             ))}
@@ -562,30 +690,30 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                     </div>
                 )}
                 {activeTab === 'settings' && (
-                    <div className="max-w-2xl space-y-6">
-                        <div className="bg-white dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700/50 rounded-lg p-6 shadow-sm">
-                            <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200 mb-1 flex items-center gap-2">
-                                <GitBranch className="w-4 h-4 text-orange-500" /> GitLab Integration
+                    <div className="max-w-3xl space-y-6">
+                        <div className="surface-card rounded-[1.6rem] border border-slate-200/75 bg-white/90 p-6 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-transparent dark:shadow-none">
+                            <h3 className="flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-200">
+                                <GitBranch className="h-4 w-4 text-orange-500" /> Integracao com GitLab
                             </h3>
-                            <p className="text-xs text-slate-500 mb-4">Configure o caminho do projeto no GitLab para sincronizar pipelines corretamente.</p>
-                            <div className="space-y-3">
+                            <p className="mt-2 text-sm text-slate-500 dark:text-[var(--text-muted)]">Configure o caminho do projeto no GitLab para leitura consistente de pipelines e integracoes automatizadas.</p>
+                            <div className="mt-5 space-y-4">
                                 <div>
-                                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">GitLab Project Path <span className="text-slate-400">(namespace/projeto)</span></label>
+                                    <label className="app-metric-label mb-2 block tracking-[0.16em]">GitLab Project Path <span className="normal-case tracking-normal text-slate-400">(namespace/projeto)</span></label>
                                     <input
                                         type="text"
                                         value={gitlabProjectPath}
                                         onChange={e => setGitlabProjectPath(e.target.value)}
                                         placeholder="Ex: minha-org/meu-projeto"
-                                        className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:ring-2 focus:ring-fiori-blue focus:outline-none font-mono"
+                                        className="app-input w-full rounded-xl px-4 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500/30 dark:text-white"
                                     />
-                                    <p className="text-xs text-slate-400 mt-1">Encontrado em: GitLab → Projeto → Settings → General → Project ID / namespace.</p>
+                                    <p className="mt-2 text-xs text-slate-400">Encontrado em GitLab → Projeto → Settings → General → namespace do projeto.</p>
                                 </div>
                                 <button
                                     onClick={handleSaveSettings}
                                     disabled={savingSettings}
-                                    className="flex items-center gap-2 px-4 py-2 bg-fiori-blue hover:bg-blue-700 text-white text-sm font-medium rounded-md transition-colors disabled:opacity-50"
+                                    className="inline-flex items-center gap-2 rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-50"
                                 >
-                                    <Save className="w-4 h-4" /> {savingSettings ? 'Salvando...' : 'Salvar Configurações'}
+                                    <Save className="h-4 w-4" /> {savingSettings ? 'Salvando...' : 'Salvar configuracoes'}
                                 </button>
                             </div>
                         </div>
@@ -593,17 +721,19 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                 )}
             </div>
 
+            </div>
+
             {/* Modal de Visualização/Edição de Arquivo */}
             {selectedFile && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+                    <div className="app-flyout flex max-h-[90vh] w-full max-w-5xl flex-col rounded-[1.6rem]">
                         {/* Header do Modal */}
-                        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+                        <div className="flex items-center justify-between border-b border-slate-200/80 bg-slate-50/45 px-6 py-4 dark:border-white/10 dark:bg-transparent">
                             <div className="flex items-center gap-3">
-                                <FileText className="w-5 h-5 text-fiori-blue" />
+                                <FileText className="h-5 w-5 text-primary-500" />
                                 <div>
                                     <h3 className="font-semibold text-slate-800 dark:text-white">{selectedFile}</h3>
-                                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                                    <p className="text-xs text-slate-500 dark:text-[var(--text-muted)]">
                                         {localPath ? `${localPath}/${selectedFile}` : selectedFile}
                                     </p>
                                 </div>
@@ -612,9 +742,9 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                                 {!isEditing ? (
                                     <button
                                         onClick={() => setIsEditing(true)}
-                                        className="flex items-center gap-2 px-3 py-1.5 bg-fiori-blue hover:bg-fiori-blue/90 text-white rounded-md text-sm font-medium transition-colors"
+                                        className="inline-flex items-center gap-2 rounded-xl bg-primary-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
                                     >
-                                        <Edit3 className="w-4 h-4" /> Editar
+                                        <Edit3 className="h-4 w-4" /> Editar
                                     </button>
                                 ) : (
                                     <>
@@ -623,24 +753,24 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                                                 setEditedContent(fileContent);
                                                 setIsEditing(false);
                                             }}
-                                            className="flex items-center gap-2 px-3 py-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-md text-sm font-medium transition-colors"
+                                            className="inline-flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200 dark:bg-white/[0.05] dark:text-slate-200 dark:hover:bg-white/[0.08]"
                                         >
                                             Cancelar
                                         </button>
                                         <button
                                             onClick={handleRequestSave}
                                             disabled={savingFile}
-                                            className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-sm font-medium transition-colors disabled:opacity-50"
+                                            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
                                         >
-                                            <Save className="w-4 h-4" /> {savingFile ? 'Salvando...' : 'Salvar'}
+                                            <Save className="h-4 w-4" /> {savingFile ? 'Salvando...' : 'Salvar'}
                                         </button>
                                     </>
                                 )}
                                 <button
                                     onClick={handleCloseFile}
-                                    className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors"
+                                    className="rounded-xl p-2 transition-colors hover:bg-slate-100/85 dark:hover:bg-white/[0.04]"
                                 >
-                                    <X className="w-5 h-5 text-slate-500" />
+                                    <X className="h-5 w-5 text-slate-500" />
                                 </button>
                             </div>
                         </div>
@@ -649,24 +779,24 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                         <div className="flex-1 overflow-auto p-0">
                             {loadingFile ? (
                                 <div className="flex items-center justify-center h-64">
-                                    <div className="animate-spin w-8 h-8 border-4 border-fiori-blue border-t-transparent rounded-full"></div>
+                                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
                                 </div>
                             ) : isEditing ? (
                                 <textarea
                                     value={editedContent}
                                     onChange={(e) => setEditedContent(e.target.value)}
-                                    className="w-full h-full min-h-[400px] p-4 font-mono text-sm bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 border-0 resize-none focus:outline-none"
+                                    className="w-full min-h-[400px] resize-none border-0 bg-slate-50/85 p-4 font-mono text-sm text-slate-800 focus:outline-none dark:bg-slate-950 dark:text-slate-200"
                                     spellCheck={false}
                                 />
                             ) : (
-                                <pre className="p-4 font-mono text-sm bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 whitespace-pre-wrap overflow-x-auto min-h-[400px]">
+                                <pre className="min-h-[400px] overflow-x-auto whitespace-pre-wrap bg-slate-50/85 p-4 font-mono text-sm text-slate-800 dark:bg-slate-950 dark:text-slate-200">
                                     <code>{fileContent}</code>
                                 </pre>
                             )}
                         </div>
 
                         {/* Footer do Modal */}
-                        <div className="px-6 py-3 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center text-xs text-slate-500">
+                        <div className="flex items-center justify-between border-t border-slate-200/80 bg-slate-50/45 px-6 py-3 text-xs text-slate-500 dark:border-white/10 dark:bg-transparent dark:text-[var(--text-muted)]">
                             <span>Linguagem: {getFileLanguage(selectedFile)}</span>
                             <span>{isEditing ? editedContent.split('\n').length : fileContent.split('\n').length} linhas</span>
                         </div>
@@ -677,14 +807,14 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
             {/* Modal de Commit */}
             {showCommitModal && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg">
-                        <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+                    <div className="app-flyout w-full max-w-lg rounded-[1.6rem]">
+                        <div className="border-b border-slate-200/80 bg-slate-50/45 px-6 py-4 dark:border-white/10 dark:bg-transparent">
                             <div className="flex items-center gap-3">
-                                <GitCommit className="w-5 h-5 text-emerald-500" />
+                                <GitCommit className="h-5 w-5 text-emerald-500" />
                                 <h3 className="font-semibold text-lg text-slate-800 dark:text-white">Confirmar Alterações</h3>
                             </div>
                             <p className="text-sm text-slate-500 mt-1">
-                                Salvando alterações em <span className="font-mono text-fiori-blue">{selectedFile}</span>
+                                Salvando alterações em <span className="font-mono text-primary-600 dark:text-primary-300">{selectedFile}</span>
                             </p>
                         </div>
                         <div className="p-6">
@@ -695,7 +825,7 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                                 value={commitMessage}
                                 onChange={(e) => setCommitMessage(e.target.value)}
                                 placeholder="Descreva as alterações realizadas..."
-                                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:ring-2 focus:ring-fiori-blue focus:border-transparent resize-none"
+                                className="app-input w-full resize-none rounded-xl px-3 py-2 text-slate-800 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-primary-500/30 dark:text-white"
                                 rows={3}
                                 autoFocus
                             />
@@ -703,19 +833,19 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                                 Dica: Use mensagens descritivas como "Corrige bug no login" ou "Adiciona validação de formulário"
                             </p>
                         </div>
-                        <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-3">
+                        <div className="flex justify-end gap-3 border-t border-slate-200 px-6 py-4 dark:border-white/10">
                             <button
                                 onClick={handleCancelCommit}
-                                className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                                className="rounded-xl px-4 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/[0.04]"
                             >
                                 Cancelar
                             </button>
                             <button
                                 onClick={handleConfirmCommit}
                                 disabled={!commitMessage.trim() || savingFile}
-                                className="px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                                <GitCommit className="w-4 h-4" />
+                                <GitCommit className="h-4 w-4" />
                                 {savingFile ? 'Commitando...' : 'Commit'}
                             </button>
                         </div>
