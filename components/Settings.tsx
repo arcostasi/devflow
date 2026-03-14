@@ -1,13 +1,12 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, Bell, Palette, Globe, Save, Key, Shield, Mail, Check, LogOut, CheckCircle2, Users, Folder, Settings2, Loader2, Trash2, UserPlus, UserCheck, RefreshCw } from 'lucide-react';
+import { User, Bell, Palette, Globe, Save, Key, Shield, Mail, Check, LogOut, CheckCircle2, Users, Folder, Settings2, Loader2, Trash2, UserPlus, UserCheck, RefreshCw, Zap } from 'lucide-react';
 import Avatar from './Avatar';
 import { ThemeMode, DensityMode } from '../types';
 import Modal from './Modal';
 import { useAuth } from '../contexts/AuthContext';
 import { useConfirm } from '../contexts/ConfirmContext';
 import { api } from '../services/api';
-import jiraLogo from '../assets/jira-logo.svg';
 
 interface SettingsProps {
   themeMode?: ThemeMode;
@@ -42,6 +41,19 @@ interface SystemSettings {
 }
 
 const DEFAULT_BIO = 'Apaixonado por código limpo e arquitetura de software escalável.';
+const clickUpSyncDateFormatter = new Intl.DateTimeFormat('pt-BR', {
+  day: '2-digit',
+  month: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+const formatClickUpSyncTime = (value?: string) => {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return clickUpSyncDateFormatter.format(parsed);
+};
 
 const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode, densityMode = 'comfortable', setDensityMode, addToast }) => {
   const { user, isAdmin, updateProfile, updatePassword } = useAuth();
@@ -85,7 +97,15 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
 
   // Estados de Integração
   const [gitlabConfig, setGitlabConfig] = useState({ connected: false, token: '', username: '', gitlabUrl: '' });
-  const [jiraConfig, setJiraConfig] = useState({ connected: false, email: '', domain: '', displayName: '' });
+  const [clickupConfig, setClickupConfig] = useState({
+    connected: false,
+    workspaceId: '',
+    listId: '',
+    mcpConnected: false,
+    mcpWorkspaceId: '',
+    lastSyncUsedWorkspaceFallback: false,
+    lastSyncAt: '',
+  });
 
   // Load Integrations
   useEffect(() => {
@@ -103,35 +123,69 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
           setGitlabConfig({ connected: false, token: '', username: '', gitlabUrl: '' });
         }
 
-        const jira = data.find((i: any) => i.provider === 'jira');
-        if (jira) {
-          setJiraConfig({
+        const clickup = data.find((i: any) => i.provider === 'clickup');
+        const clickupMcp = data.find((i: any) => i.provider === 'clickup_mcp');
+        if (clickup) {
+          setClickupConfig({
             connected: true,
-            email: jira.meta.email,
-            domain: jira.meta.domain,
-            displayName: jira.meta.displayName
+            workspaceId: clickup.meta.workspaceId || '',
+            listId: clickup.meta.listId || '',
+            mcpConnected: Boolean(clickupMcp),
+            mcpWorkspaceId: clickup.meta.mcpWorkspaceId || clickup.meta.workspaceId || '',
+            lastSyncUsedWorkspaceFallback: Boolean(clickup.meta.lastSyncUsedWorkspaceFallback),
+            lastSyncAt: clickup.meta.lastSyncAt || '',
           });
         } else {
-          setJiraConfig({ connected: false, email: '', domain: '', displayName: '' });
+          setClickupConfig({
+            connected: false,
+            workspaceId: '',
+            listId: '',
+            mcpConnected: false,
+            mcpWorkspaceId: '',
+            lastSyncUsedWorkspaceFallback: false,
+            lastSyncAt: '',
+          });
         }
       })
       .catch(err => console.error('Failed to load integrations', err));
   }, []);
 
   // Controle de Modais
-  const [activeModal, setActiveModal] = useState<'gitlab' | 'jira' | 'newUser' | null>(null);
+  const [activeModal, setActiveModal] = useState<'gitlab' | 'clickup' | 'newUser' | null>(null);
 
   // Forms temporários para os modais
   const [gitlabForm, setGitlabForm] = useState({ token: '', username: '', gitlabUrl: '' });
-  const [jiraForm, setJiraForm] = useState({ email: '', apiToken: '', domain: '' });
+  const [clickupForm, setClickupForm] = useState({ apiToken: '', workspaceId: '', listId: '', mcpAccessToken: '', mcpWorkspaceId: '' });
   const [newUserForm, setNewUserForm] = useState({ name: '', email: '', password: '', role: 'user' });
+  const [clickupTools, setClickupTools] = useState<any[]>([]);
+  const [clickupToolsSource, setClickupToolsSource] = useState<'runtime' | 'catalog' | 'catalog-fallback'>('catalog');
+  const [isLoadingClickupTools, setIsLoadingClickupTools] = useState(false);
+  const [toolToExecute, setToolToExecute] = useState('get_workspace_hierarchy');
+  const [toolArgsJson, setToolArgsJson] = useState('{\n  "workspace_id": ""\n}');
+  const [toolDryRun, setToolDryRun] = useState(true);
+  const [toolExecutionResult, setToolExecutionResult] = useState('');
+  const [isExecutingTool, setIsExecutingTool] = useState(false);
+  const [mcpAuditItems, setMcpAuditItems] = useState<any[]>([]);
+  const [isLoadingMcpAudit, setIsLoadingMcpAudit] = useState(false);
 
   // Load admin data when tab changes
   useEffect(() => {
-    if (isAdmin && (activeTab === 'admin-users' || activeTab === 'admin-groups' || activeTab === 'admin-system')) {
+    if (isAdmin && (activeTab === 'admin-users' || activeTab === 'admin-system')) {
       loadAdminData();
     }
   }, [activeTab, isAdmin]);
+
+  useEffect(() => {
+    if (isAdmin) {
+      loadAdminData();
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (activeTab !== 'integrations' || !clickupConfig.connected) return;
+    loadClickUpTools();
+    loadClickUpMcpAudit();
+  }, [activeTab, clickupConfig.connected]);
 
   const loadAdminData = async () => {
     setIsLoadingAdmin(true);
@@ -285,260 +339,433 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
     }
   };
 
-  // Handlers para Jira
-  const handleSyncJira = async () => {
+  const handleSyncClickUp = async () => {
     try {
-      addToast?.('Sincronizando Jira...', 'info', 'Importando issues e projetos.');
-      const data = await api.syncJira();
-      addToast?.('Jira Sincronizado', 'success', data.message || 'Dados importados com sucesso.');
+      addToast?.('Sincronizando ClickUp...', 'info', 'Importando tarefas via API v3.');
+      const data = await api.syncClickUp();
+      setClickupConfig(prev => ({
+        ...prev,
+        lastSyncUsedWorkspaceFallback: Boolean(data.usedWorkspaceFallback),
+        lastSyncAt: data.syncedAt || new Date().toISOString(),
+      }));
+      addToast?.('ClickUp Sincronizado', 'success', data.message || 'Dados importados com sucesso.');
     } catch (e: any) {
-      addToast?.('Falha na Sincronização', 'error', e.message || 'Não foi possível sincronizar com o Jira.');
+      addToast?.('Falha na Sincronização', 'error', e.message || 'Não foi possível sincronizar com o ClickUp.');
     }
   };
 
-  const handleConnectJira = async (e: React.FormEvent) => {
+  const handleRefreshClickUpMcpStatus = async () => {
+    try {
+      const status = await api.getClickUpStatus();
+      setClickupConfig(prev => ({
+        ...prev,
+        connected: status.connected,
+        mcpConnected: status.mcpConnected && status.mcpHealthy,
+        workspaceId: status.workspaceId || prev.workspaceId,
+        listId: status.listId || prev.listId,
+        mcpWorkspaceId: status.mcpWorkspaceId || prev.mcpWorkspaceId,
+        lastSyncUsedWorkspaceFallback: Boolean(status.lastSyncUsedWorkspaceFallback),
+        lastSyncAt: status.lastSyncAt || prev.lastSyncAt,
+      }));
+      if (status.mcpConnected && status.mcpHealthy) {
+        addToast?.('Status Atualizado', 'success', 'ClickUp MCP validado com sucesso.');
+      } else {
+        addToast?.('Status Atualizado', 'warning', status.mcpError || 'MCP não está conectado. Configure o token MCP ou use OAuth PKCE.');
+      }
+    } catch (e: any) {
+      addToast?.('Falha ao Atualizar Status', 'error', e.message || 'Não foi possível validar a conexão MCP do ClickUp.');
+    }
+  };
+
+  const handleConnectClickUp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!jiraForm.email || !jiraForm.apiToken || !jiraForm.domain) {
-      addToast?.('Campos Obrigatórios', 'error', 'Informe o e-mail, API Token e domínio do Jira para conectar.');
+    if (!clickupForm.apiToken || !clickupForm.workspaceId) {
+      addToast?.('Campos Obrigatórios', 'error', 'Informe o API Token e o Workspace ID do ClickUp.');
       return;
     }
     try {
-      const result = await api.connectJira(jiraForm);
-      setJiraConfig({ connected: true, email: jiraForm.email, domain: jiraForm.domain, displayName: result.displayName || jiraForm.email });
+      const result = await api.connectClickUp(clickupForm);
+      const attemptedMcp = Boolean(clickupForm.mcpAccessToken?.trim());
+      setClickupConfig({
+        connected: true,
+        workspaceId: clickupForm.workspaceId,
+        listId: clickupForm.listId,
+        mcpConnected: Boolean(result.mcpConnected),
+        mcpWorkspaceId: clickupForm.mcpWorkspaceId || clickupForm.workspaceId,
+        lastSyncUsedWorkspaceFallback: false,
+        lastSyncAt: '',
+      });
       setActiveModal(null);
-      addToast?.('Jira Conectado', 'success', `Conectado como ${result.displayName || jiraForm.email}`);
-      setJiraForm({ email: '', apiToken: '', domain: '' });
+      if (attemptedMcp && !result.mcpConnected) {
+        addToast?.('ClickUp API Conectada', 'warning', result.mcpError || 'API conectou, mas o MCP não validou. Revise o token MCP ou use OAuth PKCE.');
+      } else if (attemptedMcp && result.mcpConnected) {
+        addToast?.('ClickUp Conectado', 'success', 'Integração com API v3 e MCP configurada.');
+      } else {
+        addToast?.('ClickUp API Conectada', 'success', 'API v3 conectada com sucesso. Configure o MCP via token ou OAuth PKCE.');
+      }
+      setClickupForm({ apiToken: '', workspaceId: '', listId: '', mcpAccessToken: '', mcpWorkspaceId: '' });
     } catch (e: any) {
-      addToast?.('Falha na Conexão Jira', 'error', e.message || 'Verifique as credenciais e o domínio informado.');
+      addToast?.('Falha na Conexão ClickUp', 'error', e.message || 'Verifique os dados informados e tente novamente.');
     }
   };
 
-  const handleDisconnectJira = async () => {
-    if (!await confirm({ title: 'Desconectar Jira', message: 'Desconectar integração com Jira?', confirmText: 'Desconectar', variant: 'warning' })) return;
+  const handleDisconnectClickUp = async () => {
+    if (!await confirm({ title: 'Desconectar ClickUp', message: 'Desconectar integração com ClickUp API v3 e MCP?', confirmText: 'Desconectar', variant: 'warning' })) return;
     try {
-      await api.disconnectJira();
-      setJiraConfig({ connected: false, email: '', domain: '', displayName: '' });
-      addToast?.('Jira Desconectado', 'info', 'A integração com o Jira foi removida.');
+      await api.disconnectClickUp();
+      setClickupConfig({
+        connected: false,
+        workspaceId: '',
+        listId: '',
+        mcpConnected: false,
+        mcpWorkspaceId: '',
+        lastSyncUsedWorkspaceFallback: false,
+        lastSyncAt: '',
+      });
+      addToast?.('ClickUp Desconectado', 'info', 'A integração com o ClickUp foi removida.');
     } catch (e: any) {
-      addToast?.('Falha ao Desconectar', 'error', e.message || 'Não foi possível desconectar o Jira.');
+      addToast?.('Falha ao Desconectar', 'error', e.message || 'Não foi possível desconectar o ClickUp.');
+    }
+  };
+
+  const loadClickUpTools = async () => {
+    setIsLoadingClickupTools(true);
+    try {
+      const result = await api.getClickUpTools();
+      setClickupTools(Array.isArray(result.tools) ? result.tools : []);
+      setClickupToolsSource(result.source || 'catalog');
+    } catch (e: any) {
+      addToast?.('Falha ao Carregar Tools MCP', 'error', e.message || 'Não foi possível obter o catálogo MCP do ClickUp.');
+    } finally {
+      setIsLoadingClickupTools(false);
+    }
+  };
+
+  const loadClickUpMcpAudit = async () => {
+    setIsLoadingMcpAudit(true);
+    try {
+      const result = await api.getClickUpMcpAudit(30);
+      setMcpAuditItems(Array.isArray(result.items) ? result.items : []);
+    } catch (e: any) {
+      addToast?.('Falha ao Carregar Auditoria', 'error', e.message || 'Não foi possível carregar a trilha de auditoria MCP.');
+    } finally {
+      setIsLoadingMcpAudit(false);
+    }
+  };
+
+  const handleConnectClickUpMcpOAuth = async () => {
+    try {
+      const result = await api.startClickUpMcpOAuth(clickupConfig.workspaceId || clickupForm.workspaceId || undefined);
+      const popup = globalThis.open(result.authorizeUrl, 'clickup-mcp-oauth', 'width=640,height=760');
+      if (!popup) {
+        addToast?.('Popup Bloqueado', 'error', 'Habilite popups para concluir o OAuth do ClickUp MCP.');
+        return;
+      }
+      addToast?.('OAuth Iniciado', 'info', 'Finalize a autorização na janela do ClickUp.');
+
+      const interval = globalThis.setInterval(async () => {
+        if (!popup || popup.closed) {
+          globalThis.clearInterval(interval);
+          await handleRefreshClickUpMcpStatus();
+          await loadClickUpTools();
+          await loadClickUpMcpAudit();
+        }
+      }, 1500);
+    } catch (e: any) {
+      addToast?.('Falha no OAuth', 'error', e.message || 'Não foi possível iniciar o OAuth do ClickUp MCP.');
+    }
+  };
+
+  const handleExecuteMcpTool = async () => {
+    if (!toolToExecute) {
+      addToast?.('Tool Obrigatória', 'error', 'Selecione uma tool para executar.');
+      return;
+    }
+
+    let parsedArgs: Record<string, unknown> = {};
+    try {
+      parsedArgs = toolArgsJson.trim() ? JSON.parse(toolArgsJson) : {};
+    } catch {
+      addToast?.('JSON Inválido', 'error', 'Os argumentos da tool precisam estar em JSON válido.');
+      return;
+    }
+
+    setIsExecutingTool(true);
+    try {
+      const result = await api.executeClickUpMcpTool({
+        toolName: toolToExecute,
+        arguments: parsedArgs,
+        dryRun: toolDryRun,
+      });
+      setToolExecutionResult(JSON.stringify(result, null, 2));
+      addToast?.('Tool MCP Executada', 'success', toolDryRun ? 'Dry-run executado com sucesso.' : 'Execução concluída no ClickUp MCP.');
+      await loadClickUpMcpAudit();
+    } catch (e: any) {
+      setToolExecutionResult(JSON.stringify({ error: e.message || 'Falha na execução' }, null, 2));
+      addToast?.('Falha ao Executar Tool', 'error', e.message || 'Não foi possível executar a tool MCP.');
+      await loadClickUpMcpAudit();
+    } finally {
+      setIsExecutingTool(false);
     }
   };
 
   const tabs = [
     { id: 'profile', label: 'Meu Perfil', icon: User },
     { id: 'notifications', label: 'Notificações', icon: Bell },
-    { id: 'appearance', label: 'Aparência', icon: Palette },
     { id: 'integrations', label: 'Integrações', icon: Globe },
     { id: 'security', label: 'Segurança', icon: Shield },
     ...(isAdmin ? [
       { id: 'admin-users', label: 'Usuários', icon: Users },
-      { id: 'admin-groups', label: 'Grupos', icon: Shield },
       { id: 'admin-system', label: 'Sistema', icon: Settings2 },
     ] : [])
   ];
+  const connectedIntegrationsCount = Number(gitlabConfig.connected) + Number(clickupConfig.connected);
+  const pendingUsersCount = adminUsers.filter((adminUser) => adminUser.status === 'pending').length;
+  const settingsInsetCard =
+    'rounded-2xl border border-slate-200/75 bg-slate-50/78 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.82)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none';
 
   return (
-    <div className="p-6 max-w-6xl mx-auto h-full flex flex-col">
+    <div className="page-container-narrow page-shell min-h-full flex flex-col">
 
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-fiori-textPrimary dark:text-white">Configurações</h2>
-          <p className="text-sm text-fiori-textSecondary dark:text-slate-400 mt-1">
+      <div className="page-header-block mb-8">
+        <div className="page-heading">
+          <h2 className="page-title">Configurações</h2>
+          <p className="page-subtitle">
             Gerencie suas preferências e informações pessoais.
           </p>
         </div>
       </div>
 
-      {/* Horizontal Tabs */}
-      <div className="border-b border-slate-200 dark:border-slate-800 mb-8">
-        <nav className="-mb-px flex space-x-8 overflow-x-auto" aria-label="Tabs">
+      <div className="page-panel-grid mb-6 md:grid-cols-3">
+        <div className={settingsInsetCard}>
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Conta</p>
+          <p className="mt-3 text-lg font-semibold text-slate-900 dark:text-slate-100">{user?.name || 'Usuário'}</p>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Centralize preferências pessoais, segurança e densidade operacional.</p>
+        </div>
+        <div className={settingsInsetCard}>
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Integrações</p>
+          <p className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-100">{connectedIntegrationsCount}</p>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Conexões ativas entre GitLab, ClickUp e automações MCP.</p>
+        </div>
+        <div className={settingsInsetCard}>
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Governança</p>
+          <p className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-100">{isAdmin ? pendingUsersCount : 0}</p>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{isAdmin ? 'Usuários aguardando aprovação administrativa.' : 'Permissões administrativas indisponíveis para este perfil.'}</p>
+        </div>
+      </div>
+
+      <div className="surface-card panel-body-block rounded-2xl">
+        <nav className="page-tabs mb-6" aria-label="Tabs">
           {tabs.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`
-                  group inline-flex items-center py-4 px-1 border-b-[3px] font-medium text-sm transition-all whitespace-nowrap
-                  ${isActive
-                    ? 'border-fiori-blue text-fiori-blue'
-                    : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-200'}
-                `}
+                className={`group inline-flex items-center whitespace-nowrap rounded-xl border px-4 py-3 text-sm font-medium transition-all ${
+                  isActive
+                    ? 'border-slate-200/80 bg-white/85 text-slate-900 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.06] dark:text-white dark:shadow-none'
+                    : 'border-transparent text-slate-500 hover:border-slate-200/70 hover:bg-slate-50/80 hover:text-slate-800 dark:text-slate-400 dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:hover:text-slate-200'
+                }`}
               >
                 <tab.icon className={`
                   -ml-0.5 mr-2.5 h-5 w-5
-                  ${isActive ? 'text-fiori-blue' : 'text-slate-400 group-hover:text-slate-500 dark:group-hover:text-slate-300'}
+                  ${isActive ? 'text-primary-500' : 'text-slate-400 group-hover:text-slate-500 dark:group-hover:text-slate-300'}
                 `} />
                 <span>{tab.label}</span>
               </button>
             );
           })}
         </nav>
-      </div>
 
-      {/* Main Content Area */}
-      <div className="bg-fiori-cardLight dark:bg-fiori-cardDark rounded-lg shadow-sm border border-slate-200 dark:border-slate-800 p-8 min-h-[500px]">
+        <div className="min-h-[500px] w-full self-start pt-2">
 
         {activeTab === 'profile' && (
-          <div className="space-y-8 pb-6">
-            <div className="flex items-center gap-6 pb-6 border-b border-slate-100 dark:border-slate-800">
-              <div className="relative group cursor-pointer">
-                <Avatar name={user?.name || 'User'} size="xl" />
-                <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[1px]">
-                  <span className="text-white text-xs font-medium bg-black/50 px-2 py-1 rounded">Alterar</span>
+          <div className="panel-stack pb-6">
+            <div className="rounded-2xl border border-slate-200/75 bg-slate-50/70 p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.82)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
+              <div className="flex items-center gap-6 pb-6 border-b border-slate-100 dark:border-slate-800">
+                <div className="relative group cursor-pointer">
+                  <Avatar name={user?.name || 'User'} size="xl" />
+                  <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 backdrop-blur-[1px] transition-opacity group-hover:opacity-100">
+                    <span className="rounded bg-black/50 px-2 py-1 text-xs font-medium text-white">Alterar</span>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Identidade</p>
+                  <h4 className="mt-2 text-xl font-semibold text-fiori-textPrimary dark:text-white">{user?.name}</h4>
+                  <p className="mt-0.5 text-sm capitalize text-fiori-textSecondary dark:text-slate-400">{user?.role} • <span className="cursor-pointer text-fiori-link hover:underline dark:text-fiori-linkDark">@{user?.name?.toLowerCase().replace(/\s+/g, '')}</span></p>
                 </div>
               </div>
-              <div>
-                <h4 className="text-xl font-semibold text-fiori-textPrimary dark:text-white">{user?.name}</h4>
-                <p className="text-fiori-textSecondary dark:text-slate-400 text-sm mt-0.5 capitalize">{user?.role} • <span className="text-fiori-link dark:text-fiori-linkDark cursor-pointer hover:underline">@{user?.name?.toLowerCase().replace(/\s+/g, '')}</span></p>
+
+              <div className="mt-8 grid grid-cols-1 gap-8 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-fiori-textPrimary dark:text-slate-300">Nome Completo</label>
+                  <input
+                    type="text"
+                    value={profileForm.name}
+                    onChange={e => setProfileForm({ ...profileForm, name: e.target.value })}
+                    className="app-input w-full rounded-xl px-4 py-3"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-fiori-textPrimary dark:text-slate-300">Email Corporativo</label>
+                  <div className="relative">
+                    <Mail className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" />
+                    <input type="email" defaultValue={user?.email} disabled className="w-full cursor-not-allowed rounded-xl border border-slate-300 bg-slate-100 px-4 py-3 pl-10 text-slate-500 shadow-sm transition-all dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-400" />
+                  </div>
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <label className="text-sm font-semibold text-fiori-textPrimary dark:text-slate-300">Bio</label>
+                  <textarea
+                    rows={4}
+                    value={profileForm.bio}
+                    onChange={e => setProfileForm({ ...profileForm, bio: e.target.value })}
+                    className="app-input w-full rounded-xl px-4 py-3 resize-none"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <button onClick={handleSaveProfile} className="app-button-primary px-6">
+                    Salvar Perfil
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-fiori-textPrimary dark:text-slate-300">Nome Completo</label>
-                <input
-                  type="text"
-                  value={profileForm.name}
-                  onChange={e => setProfileForm({ ...profileForm, name: e.target.value })}
-                  className="w-full px-4 py-3 bg-white dark:bg-slate-800/70 border border-slate-300 dark:border-slate-600 rounded-md focus:ring-2 focus:ring-fiori-blue focus:border-transparent focus:outline-none dark:text-slate-200 shadow-sm transition-all"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-fiori-textPrimary dark:text-slate-300">Email Corporativo</label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
-                  <input type="email" defaultValue={user?.email} disabled className="w-full pl-10 px-4 py-3 bg-slate-100 dark:bg-slate-700/50 border border-slate-300 dark:border-slate-600 rounded-md text-slate-500 dark:text-slate-400 cursor-not-allowed shadow-sm transition-all" />
+            <div className="surface-card panel-body-block rounded-2xl">
+              <div className="mb-8 flex items-start gap-4">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200/80 bg-slate-50/80 text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300">
+                  <Palette className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="app-section-label">Aparência</p>
+                  <h4 className="mt-2 text-lg font-semibold text-fiori-textPrimary dark:text-white">Tema e densidade operacional</h4>
+                  <p className="mt-1 app-copy-compact">Ajuste o estilo visual e a quantidade de informação exibida sem sair do contexto do seu perfil.</p>
                 </div>
               </div>
-              <div className="space-y-2 md:col-span-2">
-                <label className="text-sm font-semibold text-fiori-textPrimary dark:text-slate-300">Bio</label>
-                <textarea
-                  rows={4}
-                  value={profileForm.bio}
-                  onChange={e => setProfileForm({ ...profileForm, bio: e.target.value })}
-                  className="w-full px-4 py-3 bg-white dark:bg-slate-800/70 border border-slate-300 dark:border-slate-600 rounded-md focus:ring-2 focus:ring-fiori-blue focus:border-transparent focus:outline-none dark:text-slate-200 resize-none shadow-sm transition-all"
-                />
+
+              <div>
+                <h5 className="mb-6 text-base font-semibold text-fiori-textPrimary dark:text-white">Tema da Interface</h5>
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+                  <div
+                    onClick={() => handleThemeChange('system')}
+                    className={`group h-40 cursor-pointer rounded-2xl border p-3 transition-all ${themeMode === 'system' ? 'border-fiori-blue bg-sky-50 shadow-sm shadow-sky-100/80 dark:bg-sky-500/10 dark:shadow-none' : 'bg-slate-50/78 hover:border-slate-300 dark:bg-white/[0.03] dark:hover:border-slate-600'}`}
+                  >
+                    <div className="relative mb-2 flex-1 overflow-hidden rounded-lg border border-slate-200 bg-white group-hover:shadow-md transition-shadow">
+                      <div className="absolute top-0 left-0 h-6 w-full border-b border-slate-100 bg-slate-100"></div>
+                      <div className="absolute top-0 left-0 h-full w-8 border-r border-slate-100 bg-slate-100"></div>
+                    </div>
+                    <div className="flex items-center justify-between px-2">
+                      <span className={`text-sm font-semibold ${themeMode === 'system' ? 'text-fiori-blue' : 'text-slate-500'}`}>Sistema</span>
+                      {themeMode === 'system' && <Check className="h-4 w-4 text-fiori-blue" />}
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => handleThemeChange('light')}
+                    className={`group h-40 cursor-pointer rounded-2xl border p-3 transition-all ${themeMode === 'light' ? 'border-fiori-blue bg-sky-50 shadow-sm shadow-sky-100/80 dark:bg-sky-500/10 dark:shadow-none' : 'bg-slate-50/78 hover:border-slate-300 dark:bg-white/[0.03]'}`}
+                  >
+                    <div className="relative mb-2 flex-1 overflow-hidden rounded-lg border border-slate-200 bg-white group-hover:shadow-md transition-shadow">
+                      <div className="absolute top-0 left-0 h-6 w-full border-b border-gray-200 bg-gray-100"></div>
+                      <div className="absolute top-0 left-0 h-full w-8 border-r border-gray-200 bg-gray-50"></div>
+                    </div>
+                    <div className="flex items-center justify-between px-2">
+                      <span className={`text-sm font-semibold ${themeMode === 'light' ? 'text-fiori-blue' : 'text-slate-500'}`}>Claro</span>
+                      {themeMode === 'light' && <Check className="h-4 w-4 text-fiori-blue" />}
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => handleThemeChange('dark')}
+                    className={`group h-40 cursor-pointer rounded-2xl border p-3 transition-all ${themeMode === 'dark' ? 'border-fiori-blue bg-sky-50 shadow-sm shadow-sky-100/80 dark:bg-sky-500/10 dark:shadow-none' : 'bg-slate-50/78 hover:border-slate-300 dark:bg-white/[0.03] dark:hover:border-slate-600'}`}
+                  >
+                    <div className="relative mb-2 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-slate-900 group-hover:shadow-md transition-shadow">
+                      <div className="absolute top-0 left-0 h-6 w-full border-b border-primary-400/20 bg-slate-800"></div>
+                      <div className="absolute top-0 left-0 h-full w-8 border-r border-primary-400/20 bg-slate-800"></div>
+                    </div>
+                    <div className="flex items-center justify-between px-2">
+                      <span className={`text-sm font-semibold ${themeMode === 'dark' ? 'text-fiori-blue' : 'text-slate-500'}`}>Escuro</span>
+                      {themeMode === 'dark' && <Check className="h-4 w-4 text-fiori-blue" />}
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="md:col-span-2">
-                <button onClick={handleSaveProfile} className="bg-fiori-blue hover:bg-blue-700 text-white px-6 py-2 rounded-md font-medium transition-colors">
-                  Salvar Perfil
-                </button>
+
+              <div className="mt-8 border-t border-slate-100 pt-8 dark:border-slate-800">
+                <h5 className="mb-6 text-base font-semibold text-fiori-textPrimary dark:text-white">Densidade de Informação</h5>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label
+                    onClick={() => setDensityMode?.('comfortable')}
+                    className="flex cursor-pointer items-center gap-3 rounded-2xl border border-slate-200/75 bg-slate-50/72 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)] transition-colors dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none"
+                  >
+                    <div className={`flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 dark:border-slate-600 ${densityMode === 'comfortable' ? 'border-fiori-blue' : ''}`}>
+                      {densityMode === 'comfortable' && <div className="h-2.5 w-2.5 rounded-full bg-fiori-blue"></div>}
+                    </div>
+                    <div>
+                      <span className={`text-sm font-medium transition-colors ${densityMode === 'comfortable' ? 'text-fiori-blue' : 'text-slate-700 dark:text-slate-300'}`}>Confortável</span>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Mais respiro entre painéis, ideal para leitura e revisão.</p>
+                    </div>
+                  </label>
+                  <label
+                    onClick={() => setDensityMode?.('compact')}
+                    className="flex cursor-pointer items-center gap-3 rounded-2xl border border-slate-200/75 bg-slate-50/72 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)] transition-colors dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none"
+                  >
+                    <div className={`flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 dark:border-slate-600 ${densityMode === 'compact' ? 'border-fiori-blue' : ''}`}>
+                      {densityMode === 'compact' && <div className="h-2.5 w-2.5 rounded-full bg-fiori-blue"></div>}
+                    </div>
+                    <div>
+                      <span className={`text-sm font-medium transition-colors ${densityMode === 'compact' ? 'text-fiori-blue' : 'text-slate-700 dark:text-slate-300'}`}>Compacto</span>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Mais informação por área útil, melhor para operação diária.</p>
+                    </div>
+                  </label>
+                </div>
               </div>
             </div>
           </div>
         )}
 
         {activeTab === 'notifications' && (
-          <div className="space-y-4">
-            {[
-              { key: 'email_digest', label: 'Resumo por Email', desc: 'Receba um resumo diário das atividades do projeto.' },
-              { key: 'pr_review', label: 'Revisões de Pull Request', desc: 'Notifique-me quando alguém solicitar minha revisão.' },
-              { key: 'ci_failed', label: 'Falhas de Build (CI/CD)', desc: 'Alerta imediato quando pipelines quebrarem.' },
-              { key: 'marketing', label: 'Novidades do Produto', desc: 'Receba atualizações sobre novas funcionalidades do DevFlow.' },
-            ].map((item) => (
-              <div key={item.key} className="flex items-center justify-between p-4 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 border border-transparent hover:border-slate-100 dark:hover:border-slate-800 transition-all">
-                <div className="pr-4">
-                  <h4 className="text-base font-semibold text-fiori-textPrimary dark:text-white">{item.label}</h4>
-                  <p className="text-sm text-fiori-textSecondary dark:text-slate-400 mt-1">{item.desc}</p>
+          <div className="panel-stack pb-6">
+            <div className="surface-card panel-body-block rounded-2xl">
+              <div className="mb-6 flex items-start gap-4">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200/80 bg-slate-50/80 text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300">
+                  <Bell className="h-5 w-5" />
                 </div>
-                <button
-                  onClick={() => toggleNotif(item.key as keyof typeof notifications)}
-                  className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-fiori-blue ${notifications[item.key as keyof typeof notifications] ? 'bg-fiori-blue' : 'bg-slate-200 dark:bg-slate-700'}`}
-                >
-                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform shadow-sm ${notifications[item.key as keyof typeof notifications] ? 'translate-x-6' : 'translate-x-1'}`} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {activeTab === 'appearance' && (
-          <div className="space-y-10">
-            <div>
-              <h4 className="text-base font-semibold text-fiori-textPrimary dark:text-white mb-6">Tema da Interface</h4>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {/* SYSTEM THEME CARD */}
-                <div
-                  onClick={() => handleThemeChange('system')}
-                  className={`group border-2 rounded-xl p-2 bg-slate-50 dark:bg-slate-800/70 cursor-pointer h-40 flex flex-col transition-all
-                        ${themeMode === 'system' ? 'border-fiori-blue' : 'border-transparent hover:border-slate-300 dark:hover:border-slate-600'}`}
-                >
-                  <div className="flex-1 bg-white rounded-lg border border-slate-200 mb-2 relative overflow-hidden group-hover:shadow-md transition-shadow">
-                    <div className="absolute top-0 left-0 w-full h-6 bg-slate-100 border-b border-slate-100"></div>
-                    <div className="absolute top-0 left-0 w-8 h-full bg-slate-100 border-r border-slate-100"></div>
-                  </div>
-                  <div className="flex items-center justify-between px-2">
-                    <span className={`text-sm font-semibold ${themeMode === 'system' ? 'text-fiori-blue' : 'text-slate-500'}`}>Sistema</span>
-                    {themeMode === 'system' && <Check className="w-4 h-4 text-fiori-blue" />}
-                  </div>
-                </div>
-
-                {/* LIGHT THEME CARD */}
-                <div
-                  onClick={() => handleThemeChange('light')}
-                  className={`group border-2 rounded-xl p-2 bg-white cursor-pointer h-40 flex flex-col transition-all
-                        ${themeMode === 'light' ? 'border-fiori-blue' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'}`}
-                >
-                  <div className="flex-1 bg-white rounded-lg border border-slate-200 mb-2 relative overflow-hidden group-hover:shadow-md transition-shadow">
-                    <div className="absolute top-0 left-0 w-full h-6 bg-gray-100 border-b border-gray-200"></div>
-                    <div className="absolute top-0 left-0 w-8 h-full bg-gray-50 border-r border-gray-200"></div>
-                  </div>
-                  <div className="flex items-center justify-between px-2">
-                    <span className={`text-sm font-semibold ${themeMode === 'light' ? 'text-fiori-blue' : 'text-slate-500'}`}>Claro</span>
-                    {themeMode === 'light' && <Check className="w-4 h-4 text-fiori-blue" />}
-                  </div>
-                </div>
-
-                {/* DARK THEME CARD */}
-                <div
-                  onClick={() => handleThemeChange('dark')}
-                  className={`group border-2 rounded-xl p-2 bg-slate-900 cursor-pointer h-40 flex flex-col transition-all
-                        ${themeMode === 'dark' ? 'border-fiori-blue' : 'border-slate-200 dark:border-slate-700 hover:border-slate-600'}`}
-                >
-                  <div className="flex-1 bg-slate-900 rounded-lg border border-slate-800 mb-2 relative overflow-hidden group-hover:shadow-md transition-shadow">
-                    <div className="absolute top-0 left-0 w-full h-6 bg-slate-800 border-b border-primary-400/20"></div>
-                    <div className="absolute top-0 left-0 w-8 h-full bg-slate-800 border-r border-primary-400/20"></div>
-                  </div>
-                  <div className="flex items-center justify-between px-2">
-                    <span className={`text-sm font-semibold ${themeMode === 'dark' ? 'text-fiori-blue' : 'text-slate-500'}`}>Escuro</span>
-                    {themeMode === 'dark' && <Check className="w-4 h-4 text-fiori-blue" />}
-                  </div>
+                <div>
+                  <p className="app-section-label">Notificações</p>
+                  <h4 className="mt-2 text-lg font-semibold text-fiori-textPrimary dark:text-white">Preferências de alerta</h4>
+                  <p className="mt-1 app-copy-compact">Defina como receber sinais de revisão, falha de pipeline e resumos do workspace.</p>
                 </div>
               </div>
-            </div>
-
-            <div className="pt-6 border-t border-slate-100 dark:border-slate-800">
-              <h4 className="text-base font-semibold text-fiori-textPrimary dark:text-white mb-6">Densidade de Informação</h4>
-              <div className="flex gap-8">
-                <label
-                  onClick={() => setDensityMode?.('comfortable')}
-                  className="flex items-center gap-3 cursor-pointer group p-3 rounded-lg border border-transparent hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-                >
-                  <div className={`w-5 h-5 rounded-full border border-slate-300 dark:border-slate-600 flex items-center justify-center group-hover:border-fiori-blue ${densityMode === 'comfortable' ? 'border-fiori-blue' : ''}`}>
-                    {densityMode === 'comfortable' && <div className="w-2.5 h-2.5 rounded-full bg-fiori-blue"></div>}
+              <div className="space-y-4">
+                {[
+                  { key: 'email_digest', label: 'Resumo por Email', desc: 'Receba um resumo diário das atividades do projeto.' },
+                  { key: 'pr_review', label: 'Revisões de Pull Request', desc: 'Notifique-me quando alguém solicitar minha revisão.' },
+                  { key: 'ci_failed', label: 'Falhas de Build (CI/CD)', desc: 'Alerta imediato quando pipelines quebrarem.' },
+                  { key: 'marketing', label: 'Novidades do Produto', desc: 'Receba atualizações sobre novas funcionalidades do DevFlow.' },
+                ].map((item) => (
+                  <div key={item.key} className="flex items-center justify-between rounded-2xl border border-slate-200/75 bg-slate-50/72 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)] transition-all dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
+                    <div className="pr-4">
+                      <h4 className="text-base font-semibold text-fiori-textPrimary dark:text-white">{item.label}</h4>
+                      <p className="mt-1 text-sm text-fiori-textSecondary dark:text-slate-400">{item.desc}</p>
+                    </div>
+                    <button
+                      onClick={() => toggleNotif(item.key as keyof typeof notifications)}
+                      className={`app-toggle ${notifications[item.key as keyof typeof notifications] ? 'app-toggle-active' : ''}`}
+                    >
+                      <span className="sr-only">{item.label}</span>
+                    </button>
                   </div>
-                  <span className={`text-sm font-medium transition-colors ${densityMode === 'comfortable' ? 'text-fiori-blue' : 'text-slate-700 dark:text-slate-300'}`}>Confortável (Padrão)</span>
-                </label>
-                <label
-                  onClick={() => setDensityMode?.('compact')}
-                  className="flex items-center gap-3 cursor-pointer group p-3 rounded-lg border border-transparent hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-                >
-                  <div className={`w-5 h-5 rounded-full border border-slate-300 dark:border-slate-600 flex items-center justify-center group-hover:border-fiori-blue ${densityMode === 'compact' ? 'border-fiori-blue' : ''}`}>
-                    {densityMode === 'compact' && <div className="w-2.5 h-2.5 rounded-full bg-fiori-blue"></div>}
-                  </div>
-                  <span className={`text-sm font-medium transition-colors ${densityMode === 'compact' ? 'text-fiori-blue' : 'text-slate-700 dark:text-slate-300'}`}>Compacto</span>
-                </label>
+                ))}
               </div>
             </div>
           </div>
         )}
 
         {activeTab === 'integrations' && (
-          <div className="space-y-6">
+          <div className="panel-stack pb-6">
             {/* GITLAB */}
-            <div className="p-6 rounded-lg border border-slate-200 dark:border-slate-700/50 bg-white dark:bg-slate-900/30 flex items-center justify-between shadow-sm hover:shadow-md dark:hover:shadow-none dark:hover:bg-slate-900/50 transition-all">
+              <div className="flex flex-col gap-6 rounded-2xl border border-slate-200/75 bg-slate-50/72 p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] xl:flex-row xl:items-center xl:justify-between dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
               <div className="flex items-center gap-5">
                 <div className={`p-4 rounded-full ${gitlabConfig.connected ? 'bg-orange-600 text-white' : 'bg-orange-50 dark:bg-slate-800'}`}>
                   <svg className={`w-8 h-8 ${!gitlabConfig.connected ? 'text-orange-600' : ''}`} viewBox="0 0 24 24" fill="currentColor">
@@ -561,16 +788,16 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
                 </div>
               </div>
               {gitlabConfig.connected ? (
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 xl:justify-end">
                   <button
                     onClick={handleSyncGitlab}
-                    className="text-sm font-medium border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 px-4 py-2.5 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center gap-2"
+                    className="app-button-secondary"
                   >
                     <RefreshCw className="w-4 h-4" /> Sincronizar
                   </button>
                   <button
                     onClick={handleDisconnectGitlab}
-                    className="text-sm font-medium border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 px-4 py-2.5 rounded-md hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors flex items-center gap-2"
+                    className="app-button-danger"
                   >
                     <LogOut className="w-4 h-4" /> Desconectar
                   </button>
@@ -578,81 +805,198 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
               ) : (
                 <button
                   onClick={() => setActiveModal('gitlab')}
-                  className="text-sm font-medium border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 px-5 py-2.5 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                  className="app-button-secondary"
                 >
                   Configurar
                 </button>
               )}
             </div>
 
-            {/* JIRA */}
-            <div className="p-6 rounded-lg border border-slate-200 dark:border-slate-700/50 bg-white dark:bg-slate-900/30 flex items-center justify-between shadow-sm hover:shadow-md dark:hover:shadow-none dark:hover:bg-slate-900/50 transition-all">
+            {/* CLICKUP */}
+              <div className="flex flex-col gap-6 rounded-2xl border border-slate-200/75 bg-slate-50/72 p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] xl:flex-row xl:items-center xl:justify-between dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
               <div className="flex items-center gap-5">
-                <img src={jiraLogo} alt="Jira" className="w-12 h-12 rounded-xl" />
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${clickupConfig.connected ? 'bg-indigo-600 text-white' : 'bg-indigo-50 dark:bg-slate-800 text-indigo-600 dark:text-indigo-300'}`}>
+                  <Zap className="w-6 h-6" />
+                </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h4 className="text-lg font-semibold text-fiori-textPrimary dark:text-white">Jira</h4>
-                    {jiraConfig.connected && (
+                    <h4 className="text-lg font-semibold text-fiori-textPrimary dark:text-white">ClickUp (API v3 + MCP)</h4>
+                    {clickupConfig.connected && (
                       <span className="text-xs flex items-center gap-1 text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-full font-medium">
-                        <CheckCircle2 className="w-3 h-3" /> Conectado como {jiraConfig.displayName}
+                        <CheckCircle2 className="w-3 h-3" /> Workspace {clickupConfig.workspaceId}
                       </span>
                     )}
                   </div>
                   <p className="text-sm text-fiori-textSecondary dark:text-slate-400">
-                    {jiraConfig.connected ? jiraConfig.domain : 'Importação de issues, sincronização de status com Jira Cloud (plano free).'}
+                    {clickupConfig.connected
+                      ? `Escopo: ${clickupConfig.listId || 'workspace completo'} • MCP: ${clickupConfig.mcpConnected ? 'ativo' : 'inativo'}`
+                      : 'Integração completa com ClickUp API v3 para sync de tarefas e ClickUp MCP para execução de tools.'}
                   </p>
+                  {clickupConfig.connected && clickupConfig.lastSyncAt && (
+                    <div className={`mt-2 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium ${clickupConfig.lastSyncUsedWorkspaceFallback ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/[0.1] dark:text-amber-300' : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/[0.1] dark:text-emerald-300'}`}>
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      {clickupConfig.lastSyncUsedWorkspaceFallback
+                        ? `Última sync via fallback do workspace em ${formatClickUpSyncTime(clickupConfig.lastSyncAt)}`
+                        : `Última sync direta do escopo em ${formatClickUpSyncTime(clickupConfig.lastSyncAt)}`}
+                    </div>
+                  )}
                 </div>
               </div>
-              {jiraConfig.connected ? (
-                <div className="flex gap-2">
+              {clickupConfig.connected ? (
+                <div className="flex flex-wrap gap-2 xl:justify-end">
                   <button
-                    onClick={handleSyncJira}
-                    className="text-sm font-medium border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 px-4 py-2.5 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center gap-2"
+                    onClick={handleSyncClickUp}
+                    className="app-button-secondary"
                   >
                     <RefreshCw className="w-4 h-4" /> Sincronizar
                   </button>
                   <button
-                    onClick={handleDisconnectJira}
-                    className="text-sm font-medium border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 px-4 py-2.5 rounded-md hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors flex items-center gap-2"
+                    onClick={handleRefreshClickUpMcpStatus}
+                    className="app-button-secondary text-indigo-600 dark:text-indigo-300"
+                  >
+                    <Globe className="w-4 h-4" /> Validar MCP
+                  </button>
+                  <button
+                    onClick={handleDisconnectClickUp}
+                    className="app-button-danger"
                   >
                     <LogOut className="w-4 h-4" /> Desconectar
                   </button>
                 </div>
               ) : (
                 <button
-                  onClick={() => setActiveModal('jira')}
-                  className="text-sm font-medium bg-fiori-blue text-white px-5 py-2.5 rounded-md hover:bg-blue-700 shadow-sm transition-colors"
+                  onClick={() => setActiveModal('clickup')}
+                  className="app-button-primary"
                 >
                   Conectar
                 </button>
               )}
             </div>
 
-            {/* Personal Access Token Info (Static) */}
-            <div className="mt-8 pt-8 border-t border-slate-100 dark:border-slate-800 opacity-60 hover:opacity-100 transition-opacity">
-              <label className="text-sm font-semibold text-fiori-textPrimary dark:text-white mb-2 block">DevFlow API Token</label>
-              <p className="text-sm text-slate-500 mb-4">Token para scripts de automação CI/CD internos.</p>
-              <div className="flex gap-4">
-                <div className="relative flex-1">
-                  <Key className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
-                  <input type="password" value="ghp_************************************" disabled className="w-full pl-10 px-4 py-3 bg-slate-50 dark:bg-[#1a1f26] border border-slate-200 dark:border-slate-700 rounded-md text-slate-500 font-mono text-sm" />
+            {clickupConfig.connected && (
+              <div className="space-y-6">
+                <div className="rounded-2xl border border-slate-200/75 bg-slate-50/72 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
+                  <div className="flex items-center justify-between mb-3">
+                    <h5 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Catálogo de Tools MCP</h5>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">Fonte: {clickupToolsSource}</span>
+                      <button onClick={loadClickUpTools} className="app-button-secondary min-h-0 px-3 py-1.5 text-xs">Atualizar</button>
+                    </div>
+                  </div>
+                  {isLoadingClickupTools ? (
+                    <p className="text-sm text-slate-500">Carregando tools MCP...</p>
+                  ) : (
+                    <div className="max-h-44 overflow-y-auto rounded-xl border border-slate-100 dark:border-slate-800">
+                      {clickupTools.length === 0 ? (
+                        <div className="app-empty-state rounded-none border-0">
+                          <strong className="text-sm">Nenhuma tool disponível</strong>
+                          <p className="text-sm">Valide o MCP para carregar o catálogo operacional.</p>
+                        </div>
+                      ) : (
+                        clickupTools.map((tool: any, idx: number) => (
+                          <div key={`${tool.name || tool.id || 'tool'}-${idx}`} className="px-3 py-2 text-xs border-b border-slate-100 dark:border-slate-800 last:border-b-0 flex items-center justify-between gap-3">
+                            <span className="font-mono text-slate-700 dark:text-slate-300">{tool.name || tool.id || 'unnamed_tool'}</span>
+                            <span className="text-slate-400">{tool.mode || tool.category || 'runtime'}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-slate-200/75 bg-slate-50/72 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
+                  <div className="flex items-center justify-between mb-3">
+                    <h5 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Console Assistido MCP</h5>
+                    <div className="flex items-center gap-2">
+                      <button onClick={handleConnectClickUpMcpOAuth} className="app-button-secondary min-h-0 px-3 py-1.5 text-xs text-indigo-600 dark:text-indigo-300">Conectar OAuth PKCE</button>
+                      <button onClick={handleRefreshClickUpMcpStatus} className="app-button-secondary min-h-0 px-3 py-1.5 text-xs">Status</button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                    <div className="md:col-span-2">
+                      <label className="text-xs text-slate-500 mb-1 block">Tool</label>
+                      <select value={toolToExecute} onChange={(e) => setToolToExecute(e.target.value)} className="app-input w-full rounded-xl px-3 py-2 text-sm">
+                        {(clickupTools.length > 0 ? clickupTools : [{ name: 'get_workspace_hierarchy' }]).map((tool: any, idx: number) => (
+                          <option key={`${tool.name || 'fallback'}-${idx}`} value={tool.name || ''}>{tool.name || 'unnamed_tool'}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-end">
+                      <label className="inline-flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                        <input type="checkbox" checked={toolDryRun} onChange={(e) => setToolDryRun(e.target.checked)} />
+                        Dry-run
+                      </label>
+                    </div>
+                  </div>
+
+                  <label className="text-xs text-slate-500 mb-1 block">Arguments (JSON)</label>
+                  <textarea value={toolArgsJson} onChange={(e) => setToolArgsJson(e.target.value)} rows={7} className="app-input mb-3 w-full rounded-xl px-3 py-2 text-xs font-mono" />
+
+                  <div className="flex items-center justify-between gap-3">
+                    <button onClick={handleExecuteMcpTool} disabled={isExecutingTool} className="app-button-primary disabled:opacity-50 disabled:shadow-none">
+                      {isExecutingTool ? 'Executando...' : 'Executar Tool'}
+                    </button>
+                    <span className="text-xs text-slate-500">Workspace MCP: {clickupConfig.mcpWorkspaceId || clickupConfig.workspaceId || 'n/d'}</span>
+                  </div>
+
+                  {toolExecutionResult && (
+                    <pre className="mt-3 max-h-64 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-900/70">{toolExecutionResult}</pre>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-slate-200/75 bg-slate-50/72 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
+                  <div className="flex items-center justify-between mb-3">
+                    <h5 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Auditoria MCP</h5>
+                    <button onClick={loadClickUpMcpAudit} className="app-button-secondary min-h-0 px-3 py-1.5 text-xs">Atualizar</button>
+                  </div>
+                  {isLoadingMcpAudit ? (
+                    <p className="text-sm text-slate-500">Carregando trilha de auditoria...</p>
+                  ) : (
+                    <div className="max-h-64 overflow-y-auto space-y-2">
+                      {mcpAuditItems.length === 0 ? (
+                        <div className="app-empty-state">
+                          <strong className="text-sm">Sem eventos de auditoria MCP</strong>
+                          <p className="text-sm">As execuções realizadas por esta conexão aparecerão aqui.</p>
+                        </div>
+                      ) : (
+                        mcpAuditItems.map((item) => (
+                          <div key={item.id} className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 dark:border-slate-800 dark:bg-slate-900/50">
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span className="text-xs font-mono text-slate-700 dark:text-slate-200">{item.toolName || item.actionType}</span>
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full ${item.status === 'success' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300' : 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-300'}`}>{item.status}</span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400">{item.createdAt} • workspace {item.workspaceId || 'n/d'}</p>
+                            <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">{item.responseSummary || '-'}</p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
+            )}
+
+            {!clickupConfig.connected && (
+              <div className="app-empty-state mt-4">
+                <strong className="text-sm">Ferramentas MCP indisponíveis</strong>
+                <p className="text-sm">Conecte o ClickUp para habilitar catálogo MCP, console assistido e trilha de auditoria.</p>
+              </div>
+            )}
           </div>
         )}
 
         {activeTab === 'security' && (
-          <div className="space-y-8">
+          <div className="panel-stack pb-6">
             {/* 2FA Section - Premium Card */}
-            <div className="relative overflow-hidden p-5 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-slate-800 dark:to-slate-900 border border-blue-100 dark:border-slate-700 rounded-xl">
+            <div className="relative overflow-hidden rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-indigo-50 p-5 dark:border-white/10 dark:from-[#1a1b1f] dark:to-[#101114]">
               <div className="absolute top-0 right-0 p-3 opacity-10">
                 <Shield className="w-24 h-24 text-fiori-blue dark:text-blue-400 transform rotate-12" />
               </div>
 
               <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex gap-4">
-                  <div className="p-3 bg-white dark:bg-slate-800 rounded-lg shadow-sm w-fit h-fit">
+                  <div className="p-3 bg-white dark:bg-white/[0.04] rounded-lg shadow-sm w-fit h-fit">
                     <Shield className="w-6 h-6 text-fiori-blue dark:text-blue-400" />
                   </div>
                   <div>
@@ -667,13 +1011,13 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
                     </p>
                   </div>
                 </div>
-                <button className="flex-shrink-0 px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-fiori-blue dark:hover:border-blue-500 text-slate-700 dark:text-slate-200 font-medium text-sm rounded-lg transition-all shadow-sm">
+                <button className="app-button-secondary flex-shrink-0">
                   Configurar 2FA
                 </button>
               </div>
             </div>
 
-            <div className="space-y-6">
+            <div className="surface-muted rounded-2xl p-6 space-y-6">
               <h4 className="text-lg font-semibold text-fiori-textPrimary dark:text-white border-b border-slate-100 dark:border-slate-800 pb-2">Alterar Senha</h4>
 
               <div className="space-y-2">
@@ -684,7 +1028,8 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
                     type="password"
                     value={passwordForm.current}
                     onChange={e => setPasswordForm({ ...passwordForm, current: e.target.value })}
-                    className="w-full pl-10 px-4 py-3 bg-white dark:bg-slate-800/70 border border-slate-300 dark:border-slate-600 rounded-md focus:ring-2 focus:ring-fiori-blue focus:border-transparent focus:outline-none dark:text-slate-200 shadow-sm transition-all"
+                    autoComplete="current-password"
+                    className="app-input w-full rounded-xl px-4 py-3 pl-10"
                     placeholder="••••••••"
                   />
                 </div>
@@ -697,7 +1042,8 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
                     type="password"
                     value={passwordForm.new}
                     onChange={e => setPasswordForm({ ...passwordForm, new: e.target.value })}
-                    className="w-full px-4 py-3 bg-white dark:bg-slate-800/70 border border-slate-300 dark:border-slate-600 rounded-md focus:ring-2 focus:ring-fiori-blue focus:border-transparent focus:outline-none dark:text-slate-200 shadow-sm transition-all"
+                    autoComplete="new-password"
+                    className="app-input w-full rounded-xl px-4 py-3"
                     placeholder="••••••••"
                   />
                 </div>
@@ -707,7 +1053,8 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
                     type="password"
                     value={passwordForm.confirm}
                     onChange={e => setPasswordForm({ ...passwordForm, confirm: e.target.value })}
-                    className="w-full px-4 py-3 bg-white dark:bg-slate-800/70 border border-slate-300 dark:border-slate-600 rounded-md focus:ring-2 focus:ring-fiori-blue focus:border-transparent focus:outline-none dark:text-slate-200 shadow-sm transition-all"
+                    autoComplete="new-password"
+                    className="app-input w-full rounded-xl px-4 py-3"
                     placeholder="••••••••"
                   />
                 </div>
@@ -717,7 +1064,7 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
                 <button
                   onClick={handleSaveSecurity}
                   disabled={!passwordForm.current || !passwordForm.new}
-                  className="bg-slate-900 dark:bg-slate-700 hover:bg-slate-800 text-white px-6 py-2 rounded-md font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="app-button-primary px-6 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
                 >
                   Atualizar Senha
                 </button>
@@ -741,12 +1088,12 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
                     try {
                       await api.deleteAccount();
                       localStorage.removeItem('devflow_token');
-                      window.location.reload();
+                      globalThis.location.reload();
                     } catch (e: any) {
                       addToast?.('Falha ao Excluir Conta', 'error', e.message || 'Não foi possível excluir sua conta. Tente novamente.');
                     }
                   }}
-                  className="flex-shrink-0 px-4 py-2 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/20 font-medium text-sm rounded-lg transition-colors shadow-sm">
+                  className="app-button-danger flex-shrink-0">
                   Excluir Conta
                 </button>
               </div>
@@ -756,12 +1103,55 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
 
         {/* ADMIN: Users Tab */}
         {activeTab === 'admin-users' && (
-          <div className="space-y-6">
+          <div className="panel-stack pb-6">
+            <div className="surface-card panel-body-block rounded-2xl">
+              <div className="mb-6 flex items-start gap-4">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200/80 bg-slate-50/80 text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300">
+                  <Shield className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="app-section-label">Grupos</p>
+                  <h4 className="mt-2 text-lg font-semibold text-fiori-textPrimary dark:text-white">Grupos e permissões</h4>
+                  <p className="mt-1 app-copy-compact">Mantenha a leitura de governança perto da gestão de usuários para reduzir troca de contexto administrativo.</p>
+                </div>
+              </div>
+
+              {isLoadingAdmin ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+                </div>
+              ) : adminGroups.length === 0 ? (
+                <div className="app-empty-state">
+                  <strong className="text-sm">Nenhum grupo cadastrado</strong>
+                  <p className="text-sm">Os grupos de permissão aparecerão aqui quando forem configurados pela administração.</p>
+                </div>
+              ) : (
+                <div className="grid gap-4">
+                  {adminGroups.map(group => (
+                    <div key={group.id} className="rounded-2xl border border-slate-200/75 bg-slate-50/72 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
+                      <div className="mb-2 flex items-center justify-between">
+                        <h4 className="font-semibold text-slate-700 dark:text-white">{group.name}</h4>
+                        <span className="text-xs text-slate-400">{group.id}</span>
+                      </div>
+                      <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">{group.description}</p>
+                      <div className="flex flex-wrap gap-2">
+                        {group.permissions.map((perm, idx) => (
+                          <span key={idx} className="rounded px-2 py-1 text-xs text-slate-600 bg-slate-100 dark:bg-slate-800 dark:text-slate-400">
+                            {perm}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-fiori-textPrimary dark:text-white">Gerenciar Usuários</h3>
               <button
                 onClick={() => setActiveModal('newUser')}
-                className="flex items-center gap-2 bg-fiori-blue hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
+                className="app-button-primary"
               >
                 <UserPlus className="w-4 h-4" />
                 Novo Usuário
@@ -772,10 +1162,15 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
               </div>
+            ) : adminUsers.length === 0 ? (
+              <div className="app-empty-state">
+                <strong className="text-sm">Nenhum usuário encontrado</strong>
+                <p className="text-sm">Adicione colaboradores para iniciar o controle de acesso do workspace.</p>
+              </div>
             ) : (
-              <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
+              <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/88 shadow-sm shadow-slate-200/60 dark:border-slate-800 dark:bg-transparent dark:shadow-none">
                 <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
-                  <thead className="bg-slate-50 dark:bg-slate-900/50">
+                  <thead className="bg-slate-50/85 dark:bg-slate-900/50">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Usuário</th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Email</th>
@@ -785,9 +1180,9 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
                       <th className="px-6 py-3 text-right text-xs font-semibold text-slate-500 uppercase">Ações</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 bg-white dark:bg-transparent">
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 bg-white/80 dark:bg-transparent">
                     {adminUsers.map(user => (
-                      <tr key={user.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                      <tr key={user.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/30">
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center gap-3">
                             <img src={user.avatar} alt="" className="w-8 h-8 rounded-full" />
@@ -809,12 +1204,12 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
                         <td className="px-6 py-4 whitespace-nowrap text-right">
                           <div className="flex items-center justify-end gap-2">
                             {user.status === 'pending' && (
-                              <button onClick={() => handleApproveUser(user.id)} className="p-1.5 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded" title="Aprovar">
+                              <button onClick={() => handleApproveUser(user.id)} className="rounded-lg p-2 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20" title="Aprovar">
                                 <UserCheck className="w-4 h-4" />
                               </button>
                             )}
                             {user.id !== 'admin' && (
-                              <button onClick={() => handleDeleteUser(user.id)} className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded" title="Remover">
+                              <button onClick={() => handleDeleteUser(user.id)} className="rounded-lg p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20" title="Remover">
                                 <Trash2 className="w-4 h-4" />
                               </button>
                             )}
@@ -829,41 +1224,9 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
           </div>
         )}
 
-        {/* ADMIN: Groups Tab */}
-        {activeTab === 'admin-groups' && (
-          <div className="space-y-6 pb-6">
-            <h3 className="text-lg font-semibold text-fiori-textPrimary dark:text-white">Grupos e Permissões</h3>
-
-            {isLoadingAdmin ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-              </div>
-            ) : (
-              <div className="grid gap-4">
-                {adminGroups.map(group => (
-                  <div key={group.id} className="p-5 bg-white dark:bg-slate-900/30 rounded-lg border border-slate-200 dark:border-slate-800">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-semibold text-slate-700 dark:text-white">{group.name}</h4>
-                      <span className="text-xs text-slate-400">{group.id}</span>
-                    </div>
-                    <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">{group.description}</p>
-                    <div className="flex flex-wrap gap-2">
-                      {group.permissions.map((perm, idx) => (
-                        <span key={idx} className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-1 rounded">
-                          {perm}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
         {/* ADMIN: System Settings Tab */}
         {activeTab === 'admin-system' && (
-          <div className="space-y-8">
+          <div className="panel-stack pb-6">
             <h3 className="text-lg font-semibold text-fiori-textPrimary dark:text-white">Configurações do Sistema</h3>
 
             {isLoadingAdmin ? (
@@ -871,7 +1234,7 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
                 <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
               </div>
             ) : (
-              <div className="space-y-6">
+              <div className="rounded-2xl border border-slate-200/75 bg-slate-50/72 p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] space-y-6 dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
                 {/* Git Directory */}
                 <div className="space-y-3">
                   <label className="flex items-center gap-2 text-sm font-semibold text-fiori-textPrimary dark:text-white">
@@ -883,42 +1246,42 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
                     value={systemSettings.gitDirectory || ''}
                     onChange={e => setSystemSettings({ ...systemSettings, gitDirectory: e.target.value })}
                     placeholder="C:\Projects\meu-repositorio"
-                    className="w-full px-4 py-3 bg-white dark:bg-slate-800/70 border border-slate-300 dark:border-slate-600 rounded-md focus:ring-2 focus:ring-fiori-blue focus:border-transparent focus:outline-none dark:text-slate-200"
+                    className="app-input w-full rounded-xl px-4 py-3"
                   />
                   <p className="text-xs text-slate-500">Caminho absoluto do repositório Git para integração com Controle de Fonte.</p>
                 </div>
 
                 {/* Self Registration */}
-                <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+                <div className="flex items-center justify-between rounded-2xl border border-slate-200/75 bg-white/72 p-4 shadow-sm shadow-slate-200/50 dark:border-white/10 dark:bg-white/[0.04] dark:shadow-none">
                   <div>
                     <h4 className="font-medium text-fiori-textPrimary dark:text-white">Permitir Auto-Cadastro</h4>
                     <p className="text-sm text-slate-500 dark:text-slate-400">Novos usuários podem criar contas sem convite.</p>
                   </div>
                   <button
                     onClick={() => setSystemSettings({ ...systemSettings, allowSelfRegister: systemSettings.allowSelfRegister === 'true' ? 'false' : 'true' })}
-                    className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${systemSettings.allowSelfRegister === 'true' ? 'bg-fiori-blue' : 'bg-slate-300 dark:bg-slate-700'}`}
+                    className={`app-toggle ${systemSettings.allowSelfRegister === 'true' ? 'app-toggle-active' : ''}`}
                   >
-                    <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform shadow-sm ${systemSettings.allowSelfRegister === 'true' ? 'translate-x-6' : 'translate-x-1'}`} />
+                    <span className="sr-only">Permitir Auto-Cadastro</span>
                   </button>
                 </div>
 
                 {/* Require Approval */}
-                <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+                <div className="flex items-center justify-between rounded-2xl border border-slate-200/75 bg-white/72 p-4 shadow-sm shadow-slate-200/50 dark:border-white/10 dark:bg-white/[0.04] dark:shadow-none">
                   <div>
                     <h4 className="font-medium text-fiori-textPrimary dark:text-white">Exigir Aprovação do Admin</h4>
                     <p className="text-sm text-slate-500 dark:text-slate-400">Novos cadastros ficam pendentes até aprovação manual.</p>
                   </div>
                   <button
                     onClick={() => setSystemSettings({ ...systemSettings, requireApproval: systemSettings.requireApproval === 'true' ? 'false' : 'true' })}
-                    className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${systemSettings.requireApproval === 'true' ? 'bg-fiori-blue' : 'bg-slate-300 dark:bg-slate-700'}`}
+                    className={`app-toggle ${systemSettings.requireApproval === 'true' ? 'app-toggle-active' : ''}`}
                   >
-                    <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform shadow-sm ${systemSettings.requireApproval === 'true' ? 'translate-x-6' : 'translate-x-1'}`} />
+                    <span className="sr-only">Exigir Aprovação do Admin</span>
                   </button>
                 </div>
 
                 <button
                   onClick={handleSaveSettings}
-                  className="flex items-center gap-2 bg-fiori-blue hover:bg-blue-700 text-white px-5 py-2.5 rounded-md text-sm font-medium transition-colors mt-4"
+                  className="app-button-primary mt-4 w-fit"
                 >
                   <Save className="w-4 h-4" />
                   Salvar Configurações
@@ -932,13 +1295,18 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
       {/* New User Modal */}
       <Modal isOpen={activeModal === 'newUser'} onClose={() => setActiveModal(null)} title="Novo Usuário" size="md">
         <form onSubmit={handleCreateUser} className="space-y-4">
+          <div className="surface-muted rounded-2xl p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Provisionamento de acesso</p>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Crie uma conta interna com papel e credenciais iniciais para entrada imediata no workspace.</p>
+          </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Nome</label>
             <input
               type="text"
               value={newUserForm.name}
               onChange={e => setNewUserForm({ ...newUserForm, name: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 focus:ring-2 focus:ring-fiori-blue focus:outline-none dark:text-white"
+              autoComplete="name"
+              className="app-input w-full rounded-xl px-3 py-2.5"
               required
             />
           </div>
@@ -948,7 +1316,8 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
               type="email"
               value={newUserForm.email}
               onChange={e => setNewUserForm({ ...newUserForm, email: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 focus:ring-2 focus:ring-fiori-blue focus:outline-none dark:text-white"
+              autoComplete="email"
+              className="app-input w-full rounded-xl px-3 py-2.5"
               required
             />
           </div>
@@ -958,7 +1327,8 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
               type="password"
               value={newUserForm.password}
               onChange={e => setNewUserForm({ ...newUserForm, password: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 focus:ring-2 focus:ring-fiori-blue focus:outline-none dark:text-white"
+              autoComplete="new-password"
+              className="app-input w-full rounded-xl px-3 py-2.5"
               required
             />
           </div>
@@ -967,15 +1337,15 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
             <select
               value={newUserForm.role}
               onChange={e => setNewUserForm({ ...newUserForm, role: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 focus:ring-2 focus:ring-fiori-blue focus:outline-none dark:text-white"
+              className="app-input w-full rounded-xl px-3 py-2.5"
             >
               <option value="user">Usuário</option>
               <option value="admin">Administrador</option>
             </select>
           </div>
           <div className="flex justify-end gap-3 pt-4">
-            <button type="button" onClick={() => setActiveModal(null)} className="px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md">Cancelar</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-fiori-blue text-white rounded-md hover:bg-blue-700">Criar Usuário</button>
+            <button type="button" onClick={() => setActiveModal(null)} className="app-button-secondary">Cancelar</button>
+            <button type="submit" className="app-button-primary">Criar Usuário</button>
           </div>
         </form>
       </Modal>
@@ -983,9 +1353,9 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
       {/* GitLab Configuration Modal */}
       <Modal isOpen={activeModal === 'gitlab'} onClose={() => setActiveModal(null)} title="Configurar GitLab" size="md">
         <form onSubmit={handleConnectGitlab} className="space-y-4">
-          <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+          <div className="rounded-2xl border border-orange-200/70 bg-orange-50/80 p-4 text-sm text-orange-800 dark:border-orange-500/20 dark:bg-orange-500/10 dark:text-orange-200">
             Crie um Personal Access Token (PAT) no GitLab com escopo <code>api</code> ou <code>read_api</code> para permitir a integração.
-          </p>
+          </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700 dark:text-slate-300">URL do GitLab <span className="text-slate-400">(opcional)</span></label>
             <input
@@ -993,7 +1363,7 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
               value={gitlabForm.gitlabUrl}
               onChange={(e) => setGitlabForm({ ...gitlabForm, gitlabUrl: e.target.value })}
               placeholder="https://gitlab.com (padrão)"
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 focus:ring-2 focus:ring-fiori-blue focus:outline-none dark:text-white"
+              className="app-input w-full rounded-xl px-3 py-2.5"
             />
             <p className="text-xs text-slate-400">Deixe em branco para usar gitlab.com ou insira a URL do seu GitLab self-hosted.</p>
           </div>
@@ -1003,8 +1373,9 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
               type="text"
               value={gitlabForm.username}
               onChange={(e) => setGitlabForm({ ...gitlabForm, username: e.target.value })}
+              autoComplete="username"
               placeholder="ex: johndoe"
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 focus:ring-2 focus:ring-fiori-blue focus:outline-none dark:text-white"
+              className="app-input w-full rounded-xl px-3 py-2.5"
             />
           </div>
           <div className="space-y-2">
@@ -1013,69 +1384,103 @@ const Settings: React.FC<SettingsProps> = ({ themeMode = 'system', setThemeMode,
               type="password"
               value={gitlabForm.token}
               onChange={(e) => setGitlabForm({ ...gitlabForm, token: e.target.value })}
+              autoComplete="off"
               placeholder="glpat-..."
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 focus:ring-2 focus:ring-fiori-blue focus:outline-none dark:text-white font-mono"
+              className="app-input w-full rounded-xl px-3 py-2.5 font-mono"
             />
           </div>
           <div className="flex justify-end gap-3 pt-4">
-            <button type="button" onClick={() => setActiveModal(null)} className="px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md">Cancelar</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-orange-600 text-white rounded-md hover:bg-orange-700">Conectar GitLab</button>
+            <button type="button" onClick={() => setActiveModal(null)} className="app-button-secondary">Cancelar</button>
+            <button type="submit" className="app-button-primary">Conectar GitLab</button>
           </div>
         </form>
       </Modal>
 
-      {/* Jira Configuration Modal */}
-      <Modal isOpen={activeModal === 'jira'} onClose={() => setActiveModal(null)} title="Configurar Jira" size="md">
-        <form onSubmit={handleConnectJira} className="space-y-4">
-          <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg flex items-start gap-3">
-            <img src={jiraLogo} alt="Jira" className="w-6 h-6 rounded flex-shrink-0 mt-0.5" />
-            <div className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
-              <p className="font-medium">Como obter o API Token do Jira:</p>
-              <ol className="list-decimal list-inside space-y-0.5 text-xs text-blue-700 dark:text-blue-300">
-                <li>Acesse <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer" className="font-mono underline hover:text-blue-900 dark:hover:text-blue-100 transition-colors">id.atlassian.com/manage-profile/security/api-tokens</a></li>
-                <li>Clique em <strong>Create API token</strong></li>
-                <li>Copie o token gerado e cole abaixo</li>
-              </ol>
-            </div>
+      {/* ClickUp Configuration Modal */}
+      <Modal isOpen={activeModal === 'clickup'} onClose={() => setActiveModal(null)} title="Configurar ClickUp API v3 + MCP" size="md">
+        <form onSubmit={handleConnectClickUp} className="space-y-4">
+          <div className="rounded-2xl border border-indigo-200/70 bg-indigo-50/80 p-4 text-sm text-indigo-800 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-200 space-y-2">
+            <p className="font-medium">Configuração recomendada:</p>
+            <ul className="list-disc list-inside text-xs space-y-1 text-indigo-700 dark:text-indigo-300">
+              <li>API Token do ClickUp para sincronização via API v3.</li>
+              <li>Workspace ID obrigatório para escopo mínimo.</li>
+              <li>O campo opcional aceita List ID e também funciona com Space ID via fallback do workspace.</li>
+              <li>MCP Access Token opcional para executar tools do ClickUp MCP.</li>
+            </ul>
           </div>
+
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">E-mail da conta Atlassian</label>
-            <input
-              type="email"
-              value={jiraForm.email}
-              onChange={(e) => setJiraForm({ ...jiraForm, email: e.target.value })}
-              placeholder="seu@email.com"
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none dark:text-white"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">API Token</label>
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">ClickUp API Token (V3)</label>
             <input
               type="password"
-              value={jiraForm.apiToken}
-              onChange={(e) => setJiraForm({ ...jiraForm, apiToken: e.target.value })}
-              placeholder="ATATT3xFfGF0..."
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none dark:text-white font-mono"
+              value={clickupForm.apiToken}
+              onChange={(e) => setClickupForm({ ...clickupForm, apiToken: e.target.value })}
+              autoComplete="off"
+              placeholder="pk_..."
+              className="app-input w-full rounded-xl px-3 py-2.5 font-mono"
             />
           </div>
+
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Domínio Jira</label>
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Workspace ID</label>
             <input
               type="text"
-              value={jiraForm.domain}
-              onChange={(e) => setJiraForm({ ...jiraForm, domain: e.target.value })}
-              placeholder="minha-org.atlassian.net"
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none dark:text-white font-mono"
+              value={clickupForm.workspaceId}
+              onChange={(e) => setClickupForm({ ...clickupForm, workspaceId: e.target.value })}
+              placeholder="9012345678"
+              className="app-input w-full rounded-xl px-3 py-2.5 font-mono"
             />
-            <p className="text-xs text-slate-500">Encontrado na URL do seu Jira: <span className="font-mono">https://sua-org.atlassian.net</span></p>
           </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">List ID ou Space ID <span className="text-slate-400">(opcional)</span></label>
+            <input
+              type="text"
+              value={clickupForm.listId}
+              onChange={(e) => setClickupForm({ ...clickupForm, listId: e.target.value })}
+              placeholder="123456789"
+              className="app-input w-full rounded-xl px-3 py-2.5 font-mono"
+            />
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Se informado, a sincronização tenta primeiro a lista específica e cai automaticamente para o workspace filtrando pelo escopo compatível.
+            </p>
+          </div>
+
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">ClickUp MCP (opcional)</p>
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">MCP Access Token</label>
+                <input
+                  type="password"
+                  value={clickupForm.mcpAccessToken}
+                  onChange={(e) => setClickupForm({ ...clickupForm, mcpAccessToken: e.target.value })}
+                  autoComplete="off"
+                  placeholder="Bearer ..."
+                  className="app-input w-full rounded-xl px-3 py-2.5 font-mono"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">MCP Workspace ID <span className="text-slate-400">(opcional)</span></label>
+                <input
+                  type="text"
+                  value={clickupForm.mcpWorkspaceId}
+                  onChange={(e) => setClickupForm({ ...clickupForm, mcpWorkspaceId: e.target.value })}
+                  placeholder="9012345678"
+                  className="app-input w-full rounded-xl px-3 py-2.5 font-mono"
+                />
+              </div>
+            </div>
+          </div>
+
           <div className="flex justify-end gap-3 pt-4">
-            <button type="button" onClick={() => setActiveModal(null)} className="px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md">Cancelar</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-[#0052CC] hover:bg-blue-800 text-white rounded-md font-medium">Conectar Jira</button>
+            <button type="button" onClick={() => setActiveModal(null)} className="app-button-secondary">Cancelar</button>
+            <button type="submit" className="app-button-primary">Conectar ClickUp</button>
           </div>
         </form>
       </Modal>
 
+      </div>
     </div>
   );
 };
