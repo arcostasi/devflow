@@ -10,7 +10,7 @@ React 19 · TypeScript · Express 5 · SQLite · TailwindCSS
 
 ---
 
-DevFlow is a comprehensive software project management tool designed for teams practicing **Scrum** and **XP (Extreme Programming)**. It combines a Kanban board, visual local Git operations, deployment environment tracking, and external integrations (GitLab/Jira) all in one modern, sleek interface.
+DevFlow is a comprehensive software project management tool designed for teams practicing **Scrum** and **XP (Extreme Programming)**. It combines a Kanban board, visual local Git operations, deployment environment tracking, and external integrations (GitLab/ClickUp API v3 + ClickUp MCP) all in one modern, sleek interface.
 
 ## ✨ Key Features
 
