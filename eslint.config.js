@@ -1,6 +1,7 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import globals from 'globals';
+import sonarjs from 'eslint-plugin-sonarjs';
 
 export default tseslint.config(
   // Global ignores
@@ -13,6 +14,12 @@ export default tseslint.config(
       'postcss.config.js',
       'tailwind.config.js',
     ],
+  },
+
+  {
+    plugins: {
+      sonarjs,
+    },
   },
 
   // Base JS recommended rules

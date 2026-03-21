@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -n \"FRONT,BACK\" -c \"cyan,magenta\" \"vite\" \"node --watch server/index.js\"",
+    "stop": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ports = @(3000,3001); $connections = Get-NetTCPConnection -State Listen -LocalPort $ports -ErrorAction SilentlyContinue; $usedPorts = @($connections | Select-Object -ExpandProperty LocalPort -Unique | Sort-Object); $pids = @($connections | Select-Object -ExpandProperty OwningProcess -Unique); if ($pids.Count -gt 0) { Stop-Process -Id $pids -Force; Write-Host ('Stopped processes on ports ' + ($usedPorts -join ', ')); } else { Write-Host 'No listening processes found on ports 3000 and 3001.' }\"",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint . --report-unused-disable-directives",
@@ -36,6 +37,7 @@
     "@vitejs/plugin-react": "^4.4.1",
     "autoprefixer": "^10.4.23",
     "eslint": "^9.39.2",
+    "eslint-plugin-sonarjs": "^4.0.2",
     "globals": "^17.3.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
