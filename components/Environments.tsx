@@ -50,7 +50,7 @@ const typeConfig: Record<string, { icon: React.ElementType; color: string; borde
 };
 
 const envInsetCard =
-    'rounded-2xl border border-slate-200/75 bg-slate-50/78 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.82)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none';
+    'rounded-2xl border border-slate-200/75 bg-slate-50/78 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.82)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none';
 
 const EnvironmentCard: React.FC<{
     env: EnvWithDeployments;
@@ -68,7 +68,7 @@ const EnvironmentCard: React.FC<{
     return (
         <div className={`surface-card overflow-hidden rounded-[1.35rem] border border-slate-200/75 border-t-4 bg-white/88 shadow-sm shadow-slate-200/60 ${type.border} dark:border-white/10 dark:bg-transparent dark:shadow-none`}>
             <div className="p-5">
-                <div className="mb-4 flex items-start justify-between gap-4">
+                <div className="mb-5 flex items-start justify-between gap-4">
                     <div className="flex items-center gap-3">
                         <div className={`rounded-2xl p-2.5 ${status.bg}`}>
                             <TypeIcon className={`h-5 w-5 ${type.color}`} />
@@ -103,11 +103,11 @@ const EnvironmentCard: React.FC<{
                     )}
                 </div>
 
-                <div className="flex gap-2">
+                <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] gap-3">
                     {canPromote && onPromote && (
                         <button
                             onClick={onPromote}
-                            className="flex-1 rounded-xl bg-primary-600 px-3 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-700"
+                            className="rounded-xl bg-primary-600 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-primary-700"
                         >
                             <span className="inline-flex items-center justify-center gap-2"><ArrowRight className="h-4 w-4" /> Promover</span>
                         </button>
@@ -115,7 +115,7 @@ const EnvironmentCard: React.FC<{
                     {env.currentVersion && onRollback && (
                         <button
                             onClick={onRollback}
-                            className="app-soft-button rounded-xl px-3 py-2.5 text-sm font-medium"
+                            className="app-soft-button rounded-xl px-4 py-3 text-sm font-medium"
                         >
                             <span className="inline-flex items-center justify-center gap-2"><RotateCcw className="h-4 w-4" /> Rollback</span>
                         </button>
@@ -127,7 +127,7 @@ const EnvironmentCard: React.FC<{
                 <>
                     <button
                         onClick={() => setExpanded(!expanded)}
-                        className="flex w-full items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500 transition-colors hover:bg-slate-50/80 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-100/80 dark:border-white/10 dark:text-[var(--text-muted)] dark:hover:bg-white/[0.04] dark:focus-visible:ring-sky-500/20"
+                        className="flex w-full items-center justify-between border-t border-slate-100 px-5 py-3.5 text-xs text-slate-500 transition-colors hover:bg-slate-50/80 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-100/80 dark:border-white/10 dark:text-[var(--text-muted)] dark:hover:bg-white/[0.04] dark:focus-visible:ring-sky-500/20"
                     >
                         <span>Histórico ({env.deployments.length} deploys)</span>
                         {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -596,7 +596,7 @@ const Environments: React.FC<EnvironmentsProps> = ({ repositories, addToast, onN
                                         </div>
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                             {sortedEnvs.map((env) => (
-                                                <div key={env.id} className="flex flex-col gap-2">
+                                                <div key={env.id} className="flex flex-col gap-3">
                                                     <EnvironmentCard
                                                         env={env}
                                                         canPromote={env.type !== 'prod' && env.currentVersion !== null}
@@ -606,7 +606,7 @@ const Environments: React.FC<EnvironmentsProps> = ({ repositories, addToast, onN
                                                     {env.type === 'dev' && (
                                                         <button
                                                             onClick={() => setDeployModal({ isOpen: true, envId: env.id, repoName })}
-                                                            className="app-soft-button w-full rounded-xl border-dashed px-3 py-2.5 text-xs font-medium text-slate-500 dark:text-[var(--text-muted)]"
+                                                            className="app-soft-button w-full rounded-xl border-dashed px-4 py-3 text-sm font-medium text-slate-500 dark:text-[var(--text-muted)]"
                                                         >
                                                             <span className="inline-flex items-center justify-center gap-2"><Plus className="w-3.5 h-3.5" /> Novo deploy</span>
                                                         </button>
