@@ -71,7 +71,7 @@ router.get('/:id', requireAuth, (req, res) => {
 
 // POST /api/environments - Create a new environment
 router.post('/', requireAuth, async (req, res) => {
-    const { name, type, repoId } = req.body;
+    const { name, type, repoId, description, internalNotes } = req.body;
 
     if (!name || !type || !repoId) {
         return res.status(400).json({ error: 'Missing required fields' });
@@ -81,9 +81,9 @@ router.post('/', requireAuth, async (req, res) => {
         const id = `env-${Date.now()}`;
 
         db.prepare(`
-            INSERT INTO environments (id, name, type, repoId, status, currentVersion)
-            VALUES (?, ?, ?, ?, 'unknown', NULL)
-        `).run(id, name, type, repoId);
+            INSERT INTO environments (id, name, type, repoId, description, internalNotes, status, currentVersion)
+            VALUES (?, ?, ?, ?, ?, ?, 'unknown', NULL)
+        `).run(id, name, type, repoId, description || null, internalNotes || null);
 
         const newEnv = db.prepare('SELECT * FROM environments WHERE id = ?').get(id);
         res.status(201).json(newEnv);
@@ -95,15 +95,17 @@ router.post('/', requireAuth, async (req, res) => {
 
 // PUT /api/environments/:id - Update environment
 router.put('/:id', requireAuth, (req, res) => {
-    const { name, type } = req.body;
+    const { name, type, description, internalNotes } = req.body;
 
     try {
         const result = db.prepare(`
             UPDATE environments 
             SET name = COALESCE(?, name),
-                type = COALESCE(?, type)
+                type = COALESCE(?, type),
+                description = COALESCE(?, description),
+                internalNotes = COALESCE(?, internalNotes)
             WHERE id = ?
-        `).run(name, type, req.params.id);
+        `).run(name, type, description, internalNotes, req.params.id);
 
         if (result.changes === 0) {
             return res.status(404).json({ error: 'Environment not found' });

@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import Modal from './Modal';
 import { Repository } from '../types';
 import { FolderGit2, GitBranch, FileText, FolderOpen, Plus, Link } from 'lucide-react';
+import AIFieldAssist from './AIFieldAssist';
 
 interface NewRepoModalProps {
   isOpen: boolean;
@@ -16,6 +17,7 @@ const NewRepoModal: React.FC<NewRepoModalProps> = ({ isOpen, onClose, onCreate }
   const [description, setDescription] = useState('');
   const [branch, setBranch] = useState('main');
   const [localPath, setLocalPath] = useState('');
+  const modeLabel = mode === 'link' ? 'Vincular existente' : 'Criar novo';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -86,6 +88,36 @@ const NewRepoModal: React.FC<NewRepoModalProps> = ({ isOpen, onClose, onCreate }
                 autoFocus
               />
             </div>
+            <AIFieldAssist
+              fieldType="repo_name"
+              variant="compact"
+              surface="new_repo_modal"
+              intent={name.trim() ? 'refine' : 'generate'}
+              currentValue={name}
+              helpText="Sugere um nome técnico coerente com o modo de cadastro."
+              buildContext={() => ({
+                mode,
+                modeLabel,
+                name,
+                description,
+                branch,
+                localPath,
+              })}
+              relatedEntities={{
+                repositoryDraft: {
+                  mode,
+                  branch,
+                  localPath: localPath.trim() || '',
+                },
+              }}
+              constraints={{
+                format: 'kebab-case',
+                avoidGenericNames: true,
+              }}
+              onApply={(result) => setName(result.value || '')}
+              buttonLabel="Gerar nome"
+              className="mt-2"
+            />
           </div>
 
           {mode === 'link' && (
@@ -117,6 +149,36 @@ const NewRepoModal: React.FC<NewRepoModalProps> = ({ isOpen, onClose, onCreate }
                 className="app-input w-full rounded-xl py-2.5 pl-9 pr-3 resize-none text-sm"
               />
             </div>
+            <AIFieldAssist
+              fieldType="repo_description"
+              variant="compact"
+              surface="new_repo_modal"
+              intent={description.trim() ? 'refine' : 'generate'}
+              currentValue={description}
+              helpText="Escreve uma descrição objetiva com foco técnico e domínio do repositório."
+              buildContext={() => ({
+                mode,
+                modeLabel,
+                name,
+                description,
+                branch,
+                localPath,
+              })}
+              relatedEntities={{
+                repositoryDraft: {
+                  mode,
+                  branch,
+                  localPath: localPath.trim() || '',
+                },
+              }}
+              constraints={{
+                audience: 'time-tecnico',
+                mentionOnlyKnownFacts: true,
+              }}
+              onApply={(result) => setDescription(result.value || '')}
+              buttonLabel="Gerar descrição"
+              className="mt-2"
+            />
           </div>
 
           {mode === 'create' && (

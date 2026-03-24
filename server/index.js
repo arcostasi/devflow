@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import apiRouter from './routes/api.js';
 import authRouter from './routes/auth.js';
+import aiRouter from './routes/ai.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -41,6 +42,9 @@ app.use('/api/auth', authRouter);
 // Integration Routes
 import integrationsRouter from './routes/integrations.js';
 app.use('/api/integrations', integrationsRouter);
+
+// AI Routes
+app.use('/api/ai', aiRouter);
 
 // MVP-1: Pipelines Routes
 import pipelinesRouter from './routes/pipelines.js';

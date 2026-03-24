@@ -4,6 +4,51 @@ export type TaskStatus = 'backlog' | 'todo' | 'doing' | 'review' | 'ready' | 'do
 export type Priority = 'low' | 'medium' | 'high';
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type DensityMode = 'comfortable' | 'compact';
+export type AIFieldType =
+  | 'task_title'
+  | 'task_description'
+  | 'task_tags'
+  | 'profile_bio'
+  | 'repo_name'
+  | 'repo_description'
+  | 'sprint_name'
+  | 'sprint_goal'
+  | 'environment_description'
+  | 'internal_notes'
+  | 'checklist_items'
+  | 'branch_name'
+  | 'commit_message'
+  | 'deploy_notes'
+  | 'comment_reply';
+export type AIIntent =
+  | 'generate'
+  | 'refine'
+  | 'suggest'
+  | 'rewrite'
+  | 'summarize'
+  | 'expand';
+export type AIFieldAssistVariant = 'inline' | 'compact' | 'expanded';
+export type AISurface =
+  | 'generic'
+  | 'new_task_modal'
+  | 'task_details'
+  | 'task_comments'
+  | 'task_git'
+  | 'new_repo_modal'
+  | 'manage_sprints_modal'
+  | 'settings_profile'
+  | 'environment_create'
+  | 'environment_edit'
+  | 'environment_inline'
+  | 'environment_deploy'
+  | 'git_commit';
+
+export interface AIContextPayload {
+  context: Record<string, unknown>;
+  currentValue?: string;
+  relatedEntities?: Record<string, unknown>;
+  constraints?: Record<string, unknown>;
+}
 
 // MVP-1: New types for enhanced task model
 export type TaskType = 'epic' | 'feature' | 'bug' | 'tech_debt';
@@ -45,6 +90,8 @@ export interface Environment {
   name: string;
   type: EnvironmentType;
   repoId: string;
+  description?: string;
+  internalNotes?: string;
   currentVersion?: string;
   currentBuildId?: string;
   status: EnvironmentStatus;
@@ -189,6 +236,61 @@ export interface ToastMessage {
   title: string;
   description?: string;
   type: 'success' | 'error' | 'info';
+}
+
+export interface AIModelInfo {
+  name: string;
+  family?: string | null;
+  parameterSize?: string | null;
+  quantization?: string | null;
+  size?: number;
+}
+
+export interface AIConfig {
+  status: {
+    available: boolean;
+    url: string;
+    version?: string | null;
+    error?: string;
+  };
+  defaults: {
+    model: string;
+    language: string;
+  };
+  preferences: {
+    model: string;
+    language: string;
+  };
+  languageOptions: Array<{
+    code: string;
+    label: string;
+  }>;
+  models: AIModelInfo[];
+}
+
+export interface AIFillFieldResponse {
+  value?: string;
+  values?: string[];
+  model: string;
+  language: string;
+  warning?: string;
+  confidence?: 'low' | 'medium' | 'high';
+  meta?: {
+    fieldType?: AIFieldType;
+    surface?: AISurface;
+    intent?: AIIntent;
+  };
+}
+
+export type RepoDetailTab = 'code' | 'issues' | 'settings';
+export type GitIntegrationTab = 'changes' | 'source' | 'insights';
+
+export interface WorkspaceNavigationTarget {
+  source?: 'dashboard' | 'repo_list' | 'repo_detail' | 'activity' | 'command_palette';
+  repoId?: string | null;
+  taskId?: string | null;
+  repoDetailTab?: RepoDetailTab;
+  gitTab?: GitIntegrationTab;
 }
 
 export enum ViewState {

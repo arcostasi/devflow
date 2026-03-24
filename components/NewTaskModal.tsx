@@ -3,6 +3,16 @@ import Modal from './Modal';
 import { Task, Priority, TaskStatus, User, Repository } from '../types';
 import Avatar from './Avatar';
 import { Tag, FolderGit2 } from 'lucide-react';
+import AIFieldAssist from './AIFieldAssist';
+
+const getTaskStatusLabel = (status: TaskStatus): string => {
+  if (status === 'backlog') return 'Backlog';
+  if (status === 'todo') return 'A Fazer';
+  if (status === 'doing') return 'Em andamento';
+  if (status === 'review') return 'Em revisão';
+  if (status === 'ready') return 'Pronta';
+  return 'Concluída';
+};
 
 interface NewTaskModalProps {
   isOpen: boolean;
@@ -21,6 +31,10 @@ const NewTaskModal: React.FC<NewTaskModalProps> = ({ isOpen, onClose, onCreate, 
   const [assigneeId, setAssigneeId] = useState<string>('');
   const [repoId, setRepoId] = useState<string>('');
   const [tagsInput, setTagsInput] = useState('');
+  const assignee = users.find((user) => user.id === assigneeId);
+  const repository = repos.find((repo) => repo.id === repoId);
+  const parsedTags = tagsInput.split(',').map((tag) => tag.trim()).filter(Boolean);
+  const statusLabel = getTaskStatusLabel(status);
 
   // Reset form when opening/closing would be handled by a useEffect in a real app or resetting on submit
 
@@ -28,8 +42,7 @@ const NewTaskModal: React.FC<NewTaskModalProps> = ({ isOpen, onClose, onCreate, 
     e.preventDefault();
     if (!title.trim()) return;
 
-    const assignee = users.find(u => u.id === assigneeId);
-    const tags = tagsInput.split(',').map(t => t.trim()).filter(t => t !== '');
+    const tags = parsedTags;
 
     onCreate({
       title,
@@ -68,7 +81,7 @@ const NewTaskModal: React.FC<NewTaskModalProps> = ({ isOpen, onClose, onCreate, 
               </h4>
             </div>
             <span className="inline-flex w-fit items-center rounded-full border border-sky-500/20 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-700 dark:text-sky-300">
-              Status inicial: {status === 'backlog' ? 'Backlog' : status === 'todo' ? 'A Fazer' : status === 'doing' ? 'Em andamento' : status === 'review' ? 'Em revisão' : status === 'ready' ? 'Pronta' : 'Concluída'}
+              {statusLabel}
             </span>
           </div>
         </div>
@@ -84,6 +97,35 @@ const NewTaskModal: React.FC<NewTaskModalProps> = ({ isOpen, onClose, onCreate, 
               className="app-input w-full rounded-xl px-4 py-3"
               autoFocus
             />
+            <AIFieldAssist
+              fieldType="task_title"
+              variant="compact"
+              surface="new_task_modal"
+              intent={title.trim() ? 'refine' : 'generate'}
+              currentValue={title}
+              helpText="Sugere um título curto usando o contexto já preenchido."
+              buildContext={() => ({
+                title,
+                description,
+                priority,
+                status,
+                statusLabel,
+                repositoryName: repository?.name || '',
+                tags: parsedTags,
+                assigneeName: assignee?.name || '',
+              })}
+              relatedEntities={{
+                repository: repository ? { id: repository.id, name: repository.name, branch: repository.branch } : {},
+                assignee: assignee ? { id: assignee.id, name: assignee.name } : {},
+              }}
+              constraints={{
+                maxLength: 90,
+                tone: 'objetivo',
+              }}
+              onApply={(result) => setTitle(result.value || '')}
+              buttonLabel="Gerar título"
+              className="mt-2"
+            />
           </div>
 
           <div className="space-y-1.5">
@@ -94,6 +136,35 @@ const NewTaskModal: React.FC<NewTaskModalProps> = ({ isOpen, onClose, onCreate, 
               rows={4}
               placeholder="Descreva o problema, objetivo, critérios de entrega ou dependências."
               className="app-input w-full rounded-xl px-4 py-3 resize-none font-mono text-sm"
+            />
+            <AIFieldAssist
+              fieldType="task_description"
+              variant="compact"
+              surface="new_task_modal"
+              intent={description.trim() ? 'refine' : 'generate'}
+              currentValue={description}
+              helpText="Monta ou refina a descrição sem perder o estado atual da tarefa."
+              buildContext={() => ({
+                title,
+                description,
+                priority,
+                status,
+                statusLabel,
+                assigneeName: assignee?.name || '',
+                repositoryName: repository?.name || '',
+                tags: parsedTags,
+              })}
+              relatedEntities={{
+                repository: repository ? { id: repository.id, name: repository.name, branch: repository.branch } : {},
+                assignee: assignee ? { id: assignee.id, name: assignee.name } : {},
+              }}
+              constraints={{
+                sections: ['problema', 'objetivo', 'impacto', 'criterio de entrega'],
+                tone: 'natural',
+              }}
+              onApply={(result) => setDescription(result.value || '')}
+              buttonLabel="Gerar descrição"
+              className="mt-2"
             />
           </div>
         </div>
@@ -196,6 +267,34 @@ const NewTaskModal: React.FC<NewTaskModalProps> = ({ isOpen, onClose, onCreate, 
                   className="app-input w-full rounded-xl py-2.5 pl-9 pr-3"
                 />
               </div>
+              <AIFieldAssist
+                fieldType="task_tags"
+                variant="compact"
+                surface="new_task_modal"
+                intent="suggest"
+                currentValue={tagsInput}
+                helpText="Sugere tags úteis para filtro e organização."
+                buildContext={() => ({
+                  title,
+                  description,
+                  priority,
+                  status,
+                  statusLabel,
+                  repositoryName: repository?.name || '',
+                  assigneeName: assignee?.name || '',
+                  currentTags: parsedTags,
+                })}
+                relatedEntities={{
+                  repository: repository ? { id: repository.id, name: repository.name } : {},
+                }}
+                constraints={{
+                  minItems: 3,
+                  maxItems: 5,
+                }}
+              onApply={(result) => setTagsInput((result.values || []).join(', '))}
+                buttonLabel="Sugerir tags"
+                className="mt-2"
+              />
             </div>
           </div>
         </div>

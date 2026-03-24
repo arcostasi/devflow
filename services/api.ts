@@ -1,4 +1,17 @@
-import { Task, Repository, Sprint, User, GitChange, GitCommit } from '../types';
+import {
+    Task,
+    Repository,
+    Sprint,
+    User,
+    GitChange,
+    GitCommit,
+    AIConfig,
+    AIFillFieldResponse,
+    AIFieldType,
+    AIIntent,
+    AISurface,
+    AIContextPayload
+} from '../types';
 
 const API_URL = 'http://127.0.0.1:3001/api';
 
@@ -32,6 +45,37 @@ export const api = {
         await handleResponse(res, 'Falha ao carregar atividades');
         if (!res.ok) throw new Error('Falha ao carregar atividades');
         return res.json();
+    },
+
+    // AI
+    getAIConfig: async (): Promise<AIConfig> => {
+        const res = await fetch(`${API_URL}/ai/config`, { headers: getAuthHeaders() });
+        await handleResponse(res, 'Falha ao carregar configurações de IA');
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Falha ao carregar configurações de IA');
+        return result;
+    },
+
+    fillAIField: async (payload: {
+        fieldType: AIFieldType;
+        context: Record<string, unknown>;
+        instruction?: string;
+        surface?: AISurface;
+        intent?: AIIntent;
+        currentValue?: string;
+        relatedEntities?: AIContextPayload['relatedEntities'];
+        constraints?: AIContextPayload['constraints'];
+        retryOnGeneric?: boolean;
+    }): Promise<AIFillFieldResponse> => {
+        const res = await fetch(`${API_URL}/ai/fill-field`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify(payload)
+        });
+        await handleResponse(res, 'Falha ao gerar conteúdo com IA');
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Falha ao gerar conteúdo com IA');
+        return result;
     },
 
     // Users
@@ -444,7 +488,7 @@ export const api = {
         return res.json();
     },
 
-    createEnvironment: async (data: { name: string; type: 'dev' | 'stage' | 'prod'; repoId: string }): Promise<any> => {
+    createEnvironment: async (data: { name: string; type: 'dev' | 'stage' | 'prod'; repoId: string; description?: string; internalNotes?: string }): Promise<any> => {
         const res = await fetch(`${API_URL}/environments`, {
             method: 'POST',
             headers: getAuthHeaders(),
@@ -455,6 +499,17 @@ export const api = {
             throw new Error(data2.error || 'Falha ao criar ambiente');
         }
         return res.json();
+    },
+
+    updateEnvironment: async (id: string, data: { name?: string; type?: 'dev' | 'stage' | 'prod'; description?: string; internalNotes?: string }): Promise<any> => {
+        const res = await fetch(`${API_URL}/environments/${id}`, {
+            method: 'PUT',
+            headers: getAuthHeaders(),
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Falha ao atualizar ambiente');
+        return result;
     },
 
     deployToEnvironment: async (envId: string, data: { version: string; buildId?: string; pipelineId?: string; notes?: string }): Promise<any> => {

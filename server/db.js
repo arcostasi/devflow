@@ -169,6 +169,8 @@ const schema = `
     name TEXT NOT NULL,
     type TEXT NOT NULL DEFAULT 'dev',
     repoId TEXT NOT NULL,
+    description TEXT,
+    internalNotes TEXT,
     currentVersion TEXT,
     currentBuildId TEXT,
     status TEXT DEFAULT 'unknown',
@@ -223,6 +225,8 @@ const migrations = [
   "ALTER TABLE repositories ADD COLUMN remoteUrl TEXT",
   "ALTER TABLE repositories ADD COLUMN gitlabProjectPath TEXT",
   "ALTER TABLE activities ADD COLUMN taskId TEXT",
+  "ALTER TABLE environments ADD COLUMN description TEXT",
+  "ALTER TABLE environments ADD COLUMN internalNotes TEXT",
 ];
 
 for (const sql of migrations) {

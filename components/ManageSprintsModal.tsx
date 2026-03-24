@@ -4,6 +4,7 @@ import { Sprint } from '../types';
 import { api } from '../services/api';
 import { Calendar, Plus, Trash2, Play, CheckCircle2, RotateCcw } from 'lucide-react';
 import { useConfirm } from '../contexts/ConfirmContext';
+import AIFieldAssist from './AIFieldAssist';
 
 interface ManageSprintsModalProps {
     isOpen: boolean;
@@ -19,6 +20,7 @@ const ManageSprintsModal: React.FC<ManageSprintsModalProps> = ({ isOpen, onClose
     const activeCount = sprints.filter((sprint) => sprint.status === 'active').length;
     const futureCount = sprints.filter((sprint) => sprint.status === 'future').length;
     const completedCount = sprints.filter((sprint) => sprint.status === 'completed').length;
+    const existingSprintNames = sprints.map((sprint) => sprint.name);
 
     // New Sprint Form
     const [name, setName] = useState('');
@@ -120,10 +122,70 @@ const ManageSprintsModal: React.FC<ManageSprintsModalProps> = ({ isOpen, onClose
                             <div>
                                 <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Nome</label>
                                 <input autoFocus required type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Sprint 24..." className="app-input w-full rounded-xl px-3 py-2.5" />
+                                <AIFieldAssist
+                                    fieldType="sprint_name"
+                                    variant="compact"
+                                    surface="manage_sprints_modal"
+                                    intent={name.trim() ? 'refine' : 'generate'}
+                                    currentValue={name}
+                                    helpText="Sugere um nome claro para o ciclo sem repetir sprints existentes."
+                                    buildContext={() => ({
+                                        name,
+                                        goal,
+                                        startDate,
+                                        endDate,
+                                        activeCount,
+                                        futureCount,
+                                        completedCount,
+                                        existingSprintNames,
+                                    })}
+                                    relatedEntities={{
+                                        existingSprints: existingSprintNames.slice(0, 10),
+                                    }}
+                                    constraints={{
+                                        avoidDuplicateNames: true,
+                                        planningWindow: `${startDate || 'sem-inicio'}:${endDate || 'sem-fim'}`,
+                                    }}
+                                    onApply={(result) => setName(result.value || '')}
+                                    buttonLabel="Gerar nome"
+                                    className="mt-2"
+                                />
                             </div>
                             <div>
                                 <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Meta</label>
                                 <input required type="text" value={goal} onChange={e => setGoal(e.target.value)} placeholder="Entregar MVP..." className="app-input w-full rounded-xl px-3 py-2.5" />
+                                <AIFieldAssist
+                                    fieldType="sprint_goal"
+                                    variant="compact"
+                                    surface="manage_sprints_modal"
+                                    intent={goal.trim() ? 'refine' : 'generate'}
+                                    currentValue={goal}
+                                    helpText="Transforma o objetivo em uma meta mais acionável e mensurável."
+                                    buildContext={() => ({
+                                        name,
+                                        goal,
+                                        startDate,
+                                        endDate,
+                                        activeCount,
+                                        futureCount,
+                                        completedCount,
+                                        existingSprintNames,
+                                    })}
+                                    relatedEntities={{
+                                        sprintDraft: {
+                                            name,
+                                            startDate,
+                                            endDate,
+                                        },
+                                    }}
+                                    constraints={{
+                                        focus: 'entrega-e-impacto',
+                                        maxSentences: 2,
+                                    }}
+                                    onApply={(result) => setGoal(result.value || '')}
+                                    buttonLabel="Gerar meta"
+                                    className="mt-2"
+                                />
                             </div>
                             <div>
                                 <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Início</label>
