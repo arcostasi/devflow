@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { api } from '../services/api';
 import { Task, TaskStatus, Subtask, Sprint, User, Repository, Comment } from '../types';
-import { Plus, UserCircle2, X, MoreHorizontal, Filter, Check, Edit2, Trash2, Users, AlertTriangle, FlaskConical, GitBranch, GitPullRequest, Layout, CheckSquare, Link as LinkIcon, MessageSquare, Send } from 'lucide-react';
+import { Plus, UserCircle2, X, MoreHorizontal, Filter, Check, Edit2, Trash2, Users, AlertTriangle, FlaskConical, GitBranch, GitPullRequest, Layout, CheckSquare, Link as LinkIcon, MessageSquare, Send, ChevronLeft, ChevronRight } from 'lucide-react';
 import Avatar from './Avatar';
 import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { useConfirm } from '../contexts/ConfirmContext';
+import AIFieldAssist from './AIFieldAssist';
 
 interface KanbanProps {
     initialTasks: Task[];
@@ -40,6 +41,23 @@ const getPriorityLabel = (priority: Task['priority']): string => {
     if (priority === 'medium') return 'Media';
     return 'Alta';
 };
+
+const getTaskStatusLabel = (status: TaskStatus): string => {
+    if (status === 'todo') return 'A Fazer';
+    if (status === 'doing') return 'Em andamento';
+    if (status === 'review') return 'Em revisão';
+    if (status === 'ready') return 'Pronto para release';
+    if (status === 'done') return 'Concluído';
+    return 'Backlog';
+};
+
+const summarizeRecentComments = (comments: Comment[], limit = 3) => comments
+    .slice(-limit)
+    .map((comment) => ({
+        author: comment.author?.name || 'Usuário',
+        text: comment.text,
+        timestamp: comment.timestamp,
+    }));
 
 const getCommentsState = (loading: boolean, count: number): 'loading' | 'empty' | 'list' => {
     if (loading) return 'loading';
@@ -205,6 +223,9 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
     };
 
     const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+    const boardScrollRef = useRef<HTMLDivElement | null>(null);
+    const [canScrollBoardLeft, setCanScrollBoardLeft] = useState(false);
+    const [canScrollBoardRight, setCanScrollBoardRight] = useState(false);
 
     // Auto-animate para colunas
     const [todoRef] = useAutoAnimate();
@@ -238,6 +259,30 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
         setDraggedTaskId(null);
     };
 
+    const updateBoardScrollState = () => {
+        const board = boardScrollRef.current;
+        if (!board) {
+            setCanScrollBoardLeft(false);
+            setCanScrollBoardRight(false);
+            return;
+        }
+
+        const maxScrollLeft = board.scrollWidth - board.clientWidth;
+        setCanScrollBoardLeft(board.scrollLeft > 8);
+        setCanScrollBoardRight(board.scrollLeft < maxScrollLeft - 8);
+    };
+
+    const scrollBoard = (direction: 'left' | 'right') => {
+        const board = boardScrollRef.current;
+        if (!board) return;
+
+        const amount = Math.max(280, Math.round(board.clientWidth * 0.72));
+        board.scrollBy({
+            left: direction === 'left' ? -amount : amount,
+            behavior: 'smooth',
+        });
+    };
+
     const filteredTasks = useMemo(() => {
         return tasks.filter(t => {
             const matchesAssignee = filterAssignee ? (t.assignee?.id === filterAssignee || t.pairAssignee?.id === filterAssignee) : true;
@@ -245,6 +290,24 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
             return matchesAssignee && matchesRepo && t.status !== 'backlog';
         });
     }, [tasks, filterAssignee, filterRepo]);
+
+    useEffect(() => {
+        updateBoardScrollState();
+
+        const board = boardScrollRef.current;
+        if (!board) return;
+
+        const handleScroll = () => updateBoardScrollState();
+        const handleResize = () => updateBoardScrollState();
+
+        board.addEventListener('scroll', handleScroll, { passive: true });
+        window.addEventListener('resize', handleResize);
+
+        return () => {
+            board.removeEventListener('scroll', handleScroll);
+            window.removeEventListener('resize', handleResize);
+        };
+    }, [filteredTasks.length]);
 
     const completedCount = useMemo(() => filteredTasks.filter(t => t.status === 'done').length, [filteredTasks]);
     const inFlightCount = useMemo(() => filteredTasks.filter(t => ['doing', 'review', 'ready'].includes(t.status)).length, [filteredTasks]);
@@ -281,6 +344,12 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
         if (nextValue === currentValue) return;
         updateTask({ [field]: nextValue } as Partial<Task>);
     };
+
+    const selectedTaskRepository = selectedTask
+        ? repositories.find((repo) => repo.id === selectedTask.repositoryId)
+        : undefined;
+    const selectedTaskStatusLabel = selectedTask ? getTaskStatusLabel(selectedTask.status) : '';
+    const recentCommentsSummary = summarizeRecentComments(comments);
 
     return (
         <div className="page-shell flex min-h-[calc(100vh-4.25rem)] flex-col">
@@ -379,9 +448,35 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                 </div>
             </div>
 
+            <div className="mx-6 mt-4 flex items-center justify-between gap-3">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-[var(--text-muted)]">
+                    Navegar colunas
+                </div>
+                <div className="flex items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={() => scrollBoard('left')}
+                        disabled={!canScrollBoardLeft}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200/80 bg-slate-50/78 text-slate-600 shadow-sm shadow-slate-200/45 transition-all hover:border-primary-500/30 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:shadow-none dark:hover:text-primary-300"
+                        aria-label="Rolar colunas para a esquerda"
+                    >
+                        <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => scrollBoard('right')}
+                        disabled={!canScrollBoardRight}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200/80 bg-slate-50/78 text-slate-600 shadow-sm shadow-slate-200/45 transition-all hover:border-primary-500/30 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:shadow-none dark:hover:text-primary-300"
+                        aria-label="Rolar colunas para a direita"
+                    >
+                        <ChevronRight className="h-4 w-4" />
+                    </button>
+                </div>
+            </div>
+
             {/* Board */}
-            <div className="flex-1 overflow-x-auto px-6 pb-6 pt-5">
-                <div className="flex h-[48rem] min-w-[1260px] gap-5 xl:h-[54rem] 2xl:h-[58rem]">
+            <div ref={boardScrollRef} className="flex-1 overflow-x-auto scroll-smooth px-6 pb-6 pt-5">
+                <div className="flex h-[42rem] min-w-[1330px] gap-5 xl:h-[48rem] xl:min-w-[1430px] 2xl:h-[52rem] 2xl:min-w-[1510px]">
                     {columns.map(col => {
                         const colTasks = filteredTasks.filter(t => t.status === col.id);
                         const isOverLimit = col.wipLimit && col.wipLimit > 0 && colTasks.length > col.wipLimit;
@@ -389,7 +484,7 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                         return (
                             <div
                                 key={col.id}
-                                className={`surface-card flex h-full flex-1 flex-col rounded-[1.35rem] ${isOverLimit ? 'border-red-300 dark:border-red-900/60' : 'border-slate-200/70 dark:border-white/10'}`}
+                                className={`surface-card flex h-full min-w-[16.1rem] flex-1 flex-col rounded-[1.35rem] xl:min-w-[17rem] 2xl:min-w-[17.75rem] ${isOverLimit ? 'border-red-300 dark:border-red-900/60' : 'border-slate-200/70 dark:border-white/10'}`}
                             >
                                 {/* Header Coluna */}
                                 <div className={`panel-header-compact rounded-t-[1.35rem] border-b border-slate-200/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.56)] dark:border-white/10 dark:shadow-none ${col.bg} ${col.border} border-t-4`}>
@@ -560,6 +655,38 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                                             className="app-input h-40 w-full resize-none rounded-2xl p-4 text-sm leading-relaxed focus:ring-2 focus:ring-primary-500/30 focus:outline-none"
                                             placeholder="Adicione detalhes, critérios de aceitação..."
                                         />
+                                        <AIFieldAssist
+                                            fieldType="task_description"
+                                            variant="compact"
+                                            surface="task_details"
+                                            intent={selectedTask.description.trim() ? 'refine' : 'expand'}
+                                            currentValue={selectedTask.description}
+                                            helpText="Expande ou refina a descrição com base no estado atual da tarefa."
+                                            buildContext={() => ({
+                                                title: selectedTask.title,
+                                                description: selectedTask.description,
+                                                priority: selectedTask.priority,
+                                                status: selectedTask.status,
+                                                statusLabel: selectedTaskStatusLabel,
+                                                repositoryName: selectedTaskRepository?.name || '',
+                                                assigneeName: selectedTask.assignee?.name || '',
+                                                pairAssigneeName: selectedTask.pairAssignee?.name || '',
+                                                storyPoints: selectedTask.storyPoints || null,
+                                                tags: selectedTask.tags,
+                                            })}
+                                            relatedEntities={{
+                                                task: { id: selectedTask.id, title: selectedTask.title },
+                                                repository: selectedTaskRepository ? { id: selectedTaskRepository.id, name: selectedTaskRepository.name, branch: selectedTaskRepository.branch } : {},
+                                                sprint: activeSprint ? { id: activeSprint.id, name: activeSprint.name, goal: activeSprint.goal } : {},
+                                            }}
+                                            constraints={{
+                                                preserveFacts: true,
+                                                sections: ['problema', 'objetivo', 'impacto', 'critério de entrega'],
+                                            }}
+                                            onApply={(result) => updateTask({ description: result.value || '' })}
+                                            buttonLabel="Refinar descrição"
+                                            className="mt-2"
+                                        />
                                     </div>
 
                                     <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
@@ -641,6 +768,47 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                                             <Plus className="w-5 h-5" />
                                         </button>
                                     </div>
+                                    <AIFieldAssist
+                                        fieldType="checklist_items"
+                                        variant="expanded"
+                                        surface="task_details"
+                                        intent="expand"
+                                        currentValue={(selectedTask.subtasks || []).map((subtask) => subtask.text).join('; ')}
+                                        helpText="Quebra o trabalho em etapas executáveis sem repetir a checklist existente."
+                                        buildContext={() => ({
+                                            title: selectedTask.title,
+                                            description: selectedTask.description,
+                                            priority: selectedTask.priority,
+                                            status: selectedTask.status,
+                                            statusLabel: selectedTaskStatusLabel,
+                                            repositoryName: selectedTaskRepository?.name || '',
+                                            existingChecklist: (selectedTask.subtasks || []).map(subtask => subtask.text),
+                                        })}
+                                        relatedEntities={{
+                                            task: { id: selectedTask.id, title: selectedTask.title, tags: selectedTask.tags },
+                                            repository: selectedTaskRepository ? { id: selectedTaskRepository.id, name: selectedTaskRepository.name } : {},
+                                        }}
+                                        constraints={{
+                                            minItems: 3,
+                                            maxItems: 7,
+                                            avoidDuplicates: true,
+                                        }}
+                                        onApply={(result) => {
+                                            const existingTexts = new Set((selectedTask.subtasks || []).map(subtask => subtask.text.trim().toLowerCase()));
+                                            const generatedSubtasks = (result.values || [])
+                                                .filter(text => !existingTexts.has(text.trim().toLowerCase()))
+                                                .map((text, index) => ({
+                                                    id: `st-ai-${Date.now()}-${index}`,
+                                                    text,
+                                                    done: false,
+                                                }));
+                                            if (generatedSubtasks.length > 0) {
+                                                updateTask({ subtasks: [...(selectedTask.subtasks || []), ...generatedSubtasks] });
+                                            }
+                                        }}
+                                        buttonLabel="Gerar checklist"
+                                        className="mt-2"
+                                    />
                                 </div>
                             )}
 
@@ -676,6 +844,39 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                                             onBlur={() => saveGitLinkDraft('linkedBranch')}
                                             placeholder="Ex: feature/TASK-123-minha-feature"
                                             className="app-input w-full rounded-xl px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-primary-500/30 focus:outline-none"
+                                        />
+                                        <AIFieldAssist
+                                            fieldType="branch_name"
+                                            variant="compact"
+                                            surface="task_git"
+                                            intent={gitLinkDrafts.linkedBranch.trim() ? 'rewrite' : 'generate'}
+                                            currentValue={gitLinkDrafts.linkedBranch}
+                                            helpText="Sugere uma branch coerente com a tarefa e o repositório vinculado."
+                                            buildContext={() => ({
+                                                taskId: selectedTask.id,
+                                                title: selectedTask.title,
+                                                description: selectedTask.description,
+                                                priority: selectedTask.priority,
+                                                status: selectedTask.status,
+                                                statusLabel: selectedTaskStatusLabel,
+                                                repositoryName: selectedTaskRepository?.name || '',
+                                                currentBranch: gitLinkDrafts.linkedBranch,
+                                            })}
+                                            relatedEntities={{
+                                                task: { id: selectedTask.id, title: selectedTask.title },
+                                                repository: selectedTaskRepository ? { id: selectedTaskRepository.id, name: selectedTaskRepository.name, branch: selectedTaskRepository.branch } : {},
+                                            }}
+                                            constraints={{
+                                                branchPrefix: 'feature|fix|chore|refactor',
+                                                maxLength: 120,
+                                            }}
+                                            onApply={(result) => {
+                                                const nextBranch = result.value || '';
+                                                setGitLinkDrafts(prev => ({ ...prev, linkedBranch: nextBranch }));
+                                                updateTask({ linkedBranch: nextBranch });
+                                            }}
+                                            buttonLabel="Gerar branch"
+                                            className="mt-2"
                                         />
                                     </div>
 
@@ -759,14 +960,46 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                                     )}
 
                                     <div className="mt-auto flex gap-2 border-t border-slate-200/60 pt-3 dark:border-white/10">
-                                        <textarea
-                                            value={commentText}
-                                            onChange={e => setCommentText(e.target.value)}
-                                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handlePostComment(); } }}
-                                            placeholder="Escreva um comentário... (Enter para enviar)"
-                                            rows={2}
-                                            className="app-input flex-1 resize-none rounded-2xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500/30 focus:outline-none"
-                                        />
+                                        <div className="flex-1">
+                                            <textarea
+                                                value={commentText}
+                                                onChange={e => setCommentText(e.target.value)}
+                                                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handlePostComment(); } }}
+                                                placeholder="Escreva um comentário... (Enter para enviar)"
+                                                rows={2}
+                                                className="app-input w-full resize-none rounded-2xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500/30 focus:outline-none"
+                                            />
+                                            <AIFieldAssist
+                                                fieldType="comment_reply"
+                                                variant="inline"
+                                                surface="task_comments"
+                                                intent={commentText.trim() ? 'refine' : 'suggest'}
+                                                currentValue={commentText}
+                                                helpText="Sugere uma resposta coerente com a tarefa e os comentários recentes."
+                                                buildContext={() => ({
+                                                    taskId: selectedTask.id,
+                                                    title: selectedTask.title,
+                                                    description: selectedTask.description,
+                                                    status: selectedTask.status,
+                                                    priority: selectedTask.priority,
+                                                    statusLabel: selectedTaskStatusLabel,
+                                                    repositoryName: selectedTaskRepository?.name || '',
+                                                    currentDraft: commentText,
+                                                    recentComments: recentCommentsSummary,
+                                                })}
+                                                relatedEntities={{
+                                                    task: { id: selectedTask.id, title: selectedTask.title, tags: selectedTask.tags },
+                                                    repository: selectedTaskRepository ? { id: selectedTaskRepository.id, name: selectedTaskRepository.name } : {},
+                                                }}
+                                                constraints={{
+                                                    tone: 'colaborativo',
+                                                    avoidPromises: true,
+                                                }}
+                                                onApply={(result) => setCommentText(result.value || '')}
+                                                buttonLabel="Sugerir comentário"
+                                                className="mt-2"
+                                            />
+                                        </div>
                                         <button
                                             onClick={handlePostComment}
                                             disabled={!commentText.trim() || postingComment}

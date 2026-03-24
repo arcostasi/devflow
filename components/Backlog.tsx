@@ -294,7 +294,7 @@ const Backlog: React.FC<BacklogProps> = ({
             {backlogTasks.map((task) => (
               <article
                 key={task.id}
-                className="surface-card group rounded-[1.35rem] border p-4 transition-all hover:-translate-y-0.5 hover:border-primary-500/20 hover:shadow-[0_24px_40px_-32px_rgba(14,165,233,0.18)] dark:hover:border-primary-500/25 dark:hover:shadow-xl"
+                className="surface-card group grid h-[18rem] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[1.35rem] border p-4 transition-all hover:-translate-y-0.5 hover:border-primary-500/20 hover:shadow-[0_24px_40px_-32px_rgba(14,165,233,0.18)] dark:hover:border-primary-500/25 dark:hover:shadow-xl"
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
@@ -314,13 +314,13 @@ const Backlog: React.FC<BacklogProps> = ({
                         </span>
                       ))}
                     </div>
-                    <h4 className="mt-3 text-base font-semibold text-slate-900 dark:text-[var(--text-primary)]">{task.title}</h4>
-                    <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-[var(--text-muted)]">
-                      {task.description || 'Item ainda sem descricao detalhada. Refinar criterios antes de comprometer a sprint.'}
-                    </p>
+                    <h4 className="mt-3 line-clamp-2 text-base font-semibold leading-7 text-slate-900 dark:text-[var(--text-primary)]">{task.title}</h4>
                   </div>
 
-                  <div className="flex flex-col items-end gap-2">
+                  <div className="flex items-start gap-2">
+                    <div className="flex h-8 min-w-8 items-center justify-center rounded-xl border border-slate-200/80 bg-slate-50/75 px-2 text-xs font-semibold text-slate-600 shadow-sm shadow-slate-200/35 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200 dark:shadow-none">
+                      {task.storyPoints || '-'}
+                    </div>
                     <button
                       onClick={(event) => deleteFromBacklog(event, task.id)}
                       className="rounded-xl p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/[0.12] dark:hover:text-red-300"
@@ -328,13 +328,16 @@ const Backlog: React.FC<BacklogProps> = ({
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200/80 bg-slate-50/75 text-sm font-semibold text-slate-600 shadow-sm shadow-slate-200/35 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200 dark:shadow-none">
-                      {task.storyPoints || '-'}
-                    </div>
                   </div>
                 </div>
 
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 pt-4 dark:border-white/10">
+                <div className="min-h-0 overflow-y-auto pr-2 pt-3">
+                  <p className="text-sm leading-6 text-slate-500 dark:text-[var(--text-muted)]">
+                    {task.description || 'Item ainda sem descricao detalhada. Refinar criterios antes de comprometer a sprint.'}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 pt-4 dark:border-white/10">
                   <p className="text-xs text-slate-500 dark:text-[var(--text-muted)]">
                     {activeSprint ? 'Pronto para comprometer no sprint atual.' : 'Ative uma sprint para mover este item para execucao.'}
                   </p>
@@ -380,7 +383,7 @@ const Backlog: React.FC<BacklogProps> = ({
 
           <div ref={sprintParent} className="flex-1 space-y-3 overflow-y-auto p-4">
             {sprintTasks.map((task) => (
-              <article key={task.id} className="surface-card rounded-[1.35rem] border p-4 transition-all hover:-translate-y-0.5 hover:border-primary-500/20 hover:shadow-[0_24px_40px_-32px_rgba(14,165,233,0.16)] dark:hover:border-primary-500/25 dark:hover:shadow-xl">
+              <article key={task.id} className="surface-card grid h-[18rem] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[1.35rem] border p-4 transition-all hover:-translate-y-0.5 hover:border-primary-500/20 hover:shadow-[0_24px_40px_-32px_rgba(14,165,233,0.16)] dark:hover:border-primary-500/25 dark:hover:shadow-xl">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -394,21 +397,24 @@ const Backlog: React.FC<BacklogProps> = ({
                         {task.id}
                       </span>
                     </div>
-                    <h4 className="mt-3 text-base font-semibold text-slate-900 dark:text-[var(--text-primary)]">{task.title}</h4>
-                    <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-[var(--text-muted)]">
-                      {task.description || 'Item comprometido sem descricao detalhada. Vale revisar contexto e criterio de aceite.'}
-                    </p>
+                    <h4 className="mt-3 line-clamp-2 text-base font-semibold leading-7 text-slate-900 dark:text-[var(--text-primary)]">{task.title}</h4>
                   </div>
 
-                  <div className="flex flex-col items-end gap-2">
-                    {task.assignee ? <Avatar name={task.assignee.name} size="sm" /> : <UserCircle2 className="h-8 w-8 text-slate-300 dark:text-slate-500" />}
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200/80 bg-slate-50/75 text-sm font-semibold text-slate-600 shadow-sm shadow-slate-200/35 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200 dark:shadow-none">
+                  <div className="flex items-start gap-2">
+                    <div className="flex h-8 min-w-8 items-center justify-center rounded-xl border border-slate-200/80 bg-slate-50/75 px-2 text-xs font-semibold text-slate-600 shadow-sm shadow-slate-200/35 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200 dark:shadow-none">
                       {task.storyPoints || '-'}
                     </div>
+                    {task.assignee ? <Avatar name={task.assignee.name} size="sm" /> : <UserCircle2 className="h-8 w-8 text-slate-300 dark:text-slate-500" />}
                   </div>
                 </div>
 
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 pt-4 dark:border-white/10">
+                <div className="min-h-0 overflow-y-auto pr-2 pt-3">
+                  <p className="text-sm leading-6 text-slate-500 dark:text-[var(--text-muted)]">
+                    {task.description || 'Item comprometido sem descricao detalhada. Vale revisar contexto e criterio de aceite.'}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 pt-4 dark:border-white/10">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-[var(--text-muted)]">
                     {task.assignee ? (
                       <span>Responsavel: {task.assignee.name}</span>

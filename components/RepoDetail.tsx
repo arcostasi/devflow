@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Repository, Task } from '../types';
+import { Repository, RepoDetailTab, Task } from '../types';
 import { ArrowLeft, GitBranch, Clock, AlertCircle, Copy, FileText, Code2, GitPullRequest, Star, Eye, Folder, X, Save, Edit3, GitCommit, Settings, AlertTriangle, Trash2 } from 'lucide-react';
 import Avatar from './Avatar';
 import { api } from '../services/api';
@@ -30,6 +30,8 @@ interface RepoDetailProps {
     onNavigateToTask: (task: Task) => void;
     addToast: (title: string, type: 'success' | 'error' | 'info', desc?: string) => void;
     onDeleteRepo?: (id: string) => void;
+    initialTab?: RepoDetailTab;
+    onOpenGit?: (repoId: string) => void;
 }
 
 const getRepoStatusLabel = (status: Repository['status']) => {
@@ -68,9 +70,12 @@ const getTaskStatusLabel = (status: Task['status']) => {
 const detailInsetCard =
     'rounded-2xl border border-slate-200/75 bg-slate-50/78 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.82)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none';
 
-const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigateToTask, addToast, onDeleteRepo }) => {
+const detailActionCard =
+    `${detailInsetCard} text-left transition-all hover:-translate-y-0.5 hover:border-primary-500/20 hover:shadow-[0_22px_34px_-30px_rgba(14,165,233,0.18)]`;
+
+const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigateToTask, addToast, onDeleteRepo, initialTab, onOpenGit }) => {
     const { confirm } = useConfirm();
-    const [activeTab, setActiveTab] = useState<'code' | 'issues' | 'settings'>('code');
+    const [activeTab, setActiveTab] = useState<RepoDetailTab>(initialTab || 'code');
     const [files, setFiles] = useState<RepoFile[]>([]);
     const [loading, setLoading] = useState(true);
     const [localPath, setLocalPath] = useState<string>('');
@@ -102,6 +107,12 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
     const [showCodeDropdown, setShowCodeDropdown] = useState(false);
     const [gitlabProjectPath, setGitlabProjectPath] = useState<string>((repo as any).gitlabProjectPath || '');
     const [savingSettings, setSavingSettings] = useState(false);
+
+    useEffect(() => {
+        if (initialTab && initialTab !== activeTab) {
+            setActiveTab(initialTab);
+        }
+    }, [initialTab, activeTab]);
 
     const handleSaveSettings = async () => {
         setSavingSettings(true);
@@ -444,27 +455,43 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                 </div>
                     </div>
                     <div className="grid grid-cols-1 gap-3 px-6 py-5 md:grid-cols-3">
-                        <div className={detailInsetCard}>
+                        <button
+                            type="button"
+                            onClick={() => onOpenGit?.(repo.id)}
+                            className={detailActionCard}
+                        >
                             <p className="app-metric-label">Branch atual</p>
                             <p className="mt-3 font-mono text-lg font-semibold text-slate-900 dark:text-[var(--text-primary)]">{repo.branch}</p>
                             <p className="app-copy-compact mt-2">Atualizado {commits.length > 0 ? commits[0].relativeDate : formatLastUpdated(repo.lastUpdated)}</p>
-                        </div>
-                        <div className={detailInsetCard}>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab('code')}
+                            className={detailActionCard}
+                        >
                             <p className="app-metric-label">Arquivos visiveis</p>
                             <p className="mt-3 text-3xl font-light text-slate-900 dark:text-[var(--text-primary)]">{fileCount}</p>
                             <p className="app-copy-compact mt-2">{directoryCount} diretorios carregados na raiz atual.</p>
-                        </div>
-                        <div className={detailInsetCard}>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab('issues')}
+                            className={detailActionCard}
+                        >
                             <p className="app-metric-label">Risco operacional</p>
                             <p className={`mt-3 text-3xl font-light ${openTaskCount > 0 ? 'text-amber-600 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-300'}`}>{openTaskCount}</p>
                             <p className="app-copy-compact mt-2">Issues abertas vinculadas ao repositorio.</p>
-                        </div>
+                        </button>
                     </div>
                 </div>
                 <div className="surface-card panel-body-block rounded-[1.6rem] xl:col-span-5">
                     <p className="app-section-label">Leitura Rapida</p>
                     <div className="mt-4 space-y-3.5">
-                        <div className={detailInsetCard}>
+                        <button
+                            type="button"
+                            onClick={() => onOpenGit?.(repo.id)}
+                            className={detailActionCard}
+                        >
                             <div className="flex items-start gap-3">
                                 <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 dark:bg-blue-500/[0.12] dark:text-blue-300">
                                     <GitCommit className="h-5 w-5" />
@@ -476,8 +503,12 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                                     </p>
                                 </div>
                             </div>
-                        </div>
-                        <div className={detailInsetCard}>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab('issues')}
+                            className={detailActionCard}
+                        >
                             <div className="flex items-start gap-3">
                                 <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-50 text-amber-600 dark:bg-amber-500/[0.12] dark:text-amber-300">
                                     <AlertCircle className="h-5 w-5" />
@@ -489,8 +520,12 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                                     </p>
                                 </div>
                             </div>
-                        </div>
-                        <div className={detailInsetCard}>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab('settings')}
+                            className={detailActionCard}
+                        >
                             <div className="flex items-start gap-3">
                                 <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-600 dark:bg-white/[0.05] dark:text-slate-300">
                                     <Eye className="h-5 w-5" />
@@ -502,7 +537,7 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                                     </p>
                                 </div>
                             </div>
-                        </div>
+                        </button>
                     </div>
                 </div>
             </section>

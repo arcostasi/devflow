@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState } from 'react';
-import { ActivityLog, Task, Repository, ViewState } from '../types';
+import { ActivityLog, GitIntegrationTab, Task, Repository, ViewState } from '../types';
 import { GitPullRequest, GitCommit, GitMerge, AlertCircle, FolderGit2, AlertTriangle, ArrowRight, Plus, ExternalLink, X, ShieldCheck, Boxes, Rocket } from 'lucide-react';
 import Avatar from './Avatar';
 
@@ -12,6 +12,7 @@ interface DashboardProps {
   onCreateTask: () => void;
   onCreateRepo: () => void;
   onOpenRepo: (id: string) => void;
+  onOpenRepoInGit: (id: string, tab?: GitIntegrationTab) => void;
   onOpenTask: (task: Task) => void;
   stats?: {
     totalCommits: number;
@@ -49,7 +50,7 @@ const getActivityMetaLabel = (log: ActivityLog) => {
       const parsed = JSON.parse(trimmedMeta) as Record<string, string>;
       if (parsed.taskId) return 'Tarefa rastreada';
       if (parsed.sprintId) return 'Sprint rastreada';
-      if (parsed.repoId) return 'Repositorio rastreado';
+      if (parsed.repoId) return 'Repositório rastreado';
       if (parsed.pipelineId) return 'Pipeline rastreado';
     } catch {
       return trimmedMeta;
@@ -139,20 +140,93 @@ const ContributionGraph: React.FC<{ data?: Record<string, number> }> = ({ data =
   );
 };
 
-const ActivityItem: React.FC<{ log: ActivityLog; task?: Task; onOpenTask: (task: Task) => void }> = ({ log, task, onOpenTask }) => {
+const getRepoActionLabel = (targetType: ActivityLog['targetType']) => (
+  targetType === 'commit' ? 'Abrir commits' : 'Abrir repositório'
+);
+
+const actionPillClassName = 'inline-flex items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/78 px-2.5 py-1 text-[11px] font-medium text-slate-600 shadow-sm shadow-slate-200/40 transition-all hover:border-primary-500/25 hover:text-primary-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:shadow-none dark:hover:text-primary-300';
+
+const ActivityItem: React.FC<{
+  log: ActivityLog;
+  task?: Task;
+  repo?: Repository;
+  onOpenTask: (task: Task) => void;
+  onOpenRepo: (id: string) => void;
+  onOpenRepoInGit: (id: string, tab?: GitIntegrationTab) => void;
+  onNavigate: (view: ViewState) => void;
+}> = ({ log, task, repo, onOpenTask, onOpenRepo, onOpenRepoInGit, onNavigate }) => {
   const getIcon = () => {
     switch (log.targetType) {
       case 'pr': return <GitPullRequest className="w-4 h-4 text-purple-600 dark:text-purple-400" />;
       case 'commit': return <GitCommit className="w-4 h-4 text-blue-600 dark:text-blue-400" />;
       case 'issue': return <AlertCircle className="w-4 h-4 text-orange-600 dark:text-orange-400" />;
+      case 'sprint': return <Boxes className="w-4 h-4 text-violet-600 dark:text-violet-300" />;
       default: return <GitMerge className="w-4 h-4 text-slate-500" />;
     }
   };
 
   const userName = log.user?.name || 'Usuário Desconhecido';
-  const canOpenTask = log.targetType === 'issue' && Boolean(task);
   const metaLabel = getActivityMetaLabel(log);
   const timestampLabel = formatDashboardTimestamp(log.timestamp);
+
+  const activityAction = (() => {
+    if (log.targetType === 'issue') {
+      if (task) {
+        return {
+          label: 'Abrir tarefa',
+          handler: () => onOpenTask(task),
+        };
+      }
+
+      return {
+        label: 'Ir para sprint',
+        handler: () => onNavigate(ViewState.KANBAN),
+      };
+    }
+
+    if (log.targetType === 'sprint') {
+      return {
+        label: 'Abrir sprint',
+        handler: () => onNavigate(ViewState.KANBAN),
+      };
+    }
+
+    if (log.targetType === 'commit') {
+      if (repo) {
+        return {
+          label: getRepoActionLabel(log.targetType),
+          handler: () => onOpenRepoInGit(repo.id, 'changes'),
+        };
+      }
+
+      return {
+        label: 'Ver commits',
+        handler: () => onNavigate(ViewState.GIT),
+      };
+    }
+
+    if (log.targetType === 'repo' || log.targetType === 'pr') {
+      if (repo) {
+        return {
+          label: log.targetType === 'pr' ? 'Abrir revisão' : getRepoActionLabel(log.targetType),
+          handler: () => onOpenRepo(repo.id),
+        };
+      }
+
+      return {
+        label: log.targetType === 'pr' ? 'Ver revisões' : 'Ver repositórios',
+        handler: () => onNavigate(log.targetType === 'pr' ? ViewState.GIT : ViewState.REPOS),
+      };
+    }
+
+    return null;
+  })();
+
+  const canNavigate = Boolean(activityAction);
+  const handlePrimaryAction = () => {
+    if (!activityAction) return;
+    activityAction.handler();
+  };
 
   return (
     <div className="group flex items-start gap-3 rounded-2xl border border-slate-200/55 bg-slate-50/55 px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.56)] transition-all hover:border-slate-200/80 hover:bg-slate-50/85 hover:shadow-[0_18px_34px_-30px_rgba(15,23,42,0.18),inset_0_1px_0_rgba(255,255,255,0.62)] dark:border-white/5 dark:bg-white/[0.015] dark:shadow-none dark:hover:border-white/10 dark:hover:bg-white/[0.03]">
@@ -163,10 +237,10 @@ const ActivityItem: React.FC<{ log: ActivityLog; task?: Task; onOpenTask: (task:
         <div className="text-sm leading-relaxed text-slate-700 dark:text-[var(--text-secondary)]">
           <span className="font-semibold text-slate-800 dark:text-white">{userName}</span>{' '}
           <span className="text-slate-500 dark:text-[var(--text-muted)]">{log.action}</span>{' '}
-          {canOpenTask ? (
+          {canNavigate ? (
             <button
               type="button"
-              onClick={() => task && onOpenTask(task)}
+              onClick={handlePrimaryAction}
               className="cursor-pointer font-medium text-primary-600 transition-colors hover:text-primary-700 hover:underline focus:outline-none focus:underline dark:text-primary-300 dark:hover:text-primary-200"
             >
               {log.target}
@@ -180,6 +254,17 @@ const ActivityItem: React.FC<{ log: ActivityLog; task?: Task; onOpenTask: (task:
         {metaLabel && (
           <div className="mt-2 inline-flex w-fit items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/72 px-2.5 py-1 text-[11px] font-medium text-slate-500 shadow-sm shadow-slate-200/40 dark:border-white/10 dark:bg-white/[0.04] dark:text-[var(--text-muted)] dark:shadow-none">
             {getIcon()} {metaLabel}
+          </div>
+        )}
+        {activityAction && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handlePrimaryAction}
+              className={actionPillClassName}
+            >
+              {activityAction.label} <ArrowRight className="h-3 w-3" />
+            </button>
           </div>
         )}
         <div className="mt-2 text-[11px] uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">{timestampLabel}</div>
@@ -254,8 +339,7 @@ const getRepoStatusDotClass = (isBroken: boolean, status: Repository['status']):
   return 'bg-slate-400';
 };
 
-const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, onNavigate, onCreateTask, onCreateRepo, onOpenRepo, onOpenTask, stats }) => {
-
+const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, onNavigate, onCreateTask, onCreateRepo, onOpenRepo, onOpenRepoInGit, onOpenTask, stats }) => {
   const openIssuesCount = useMemo(() => tasks.filter(t => t.status !== 'done').length, [tasks]);
   const reviewsCount = useMemo(() => tasks.filter(t => t.status === 'review').length, [tasks]);
   const readyForReleaseCount = useMemo(() => tasks.filter(t => t.status === 'ready').length, [tasks]);
@@ -274,12 +358,48 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
     () => new Map(tasks.map(task => [task.id, task])),
     [tasks]
   );
+  const repoById = useMemo(
+    () => new Map(repositories.map(repo => [repo.id, repo])),
+    [repositories]
+  );
   const taskByTitle = useMemo(
     () => new Map(tasks.map(task => [task.title.trim().toLocaleLowerCase('pt-BR'), task])),
     [tasks]
   );
+  const repoByName = useMemo(
+    () => new Map(repositories.map(repo => [repo.name.trim().toLocaleLowerCase('pt-BR'), repo])),
+    [repositories]
+  );
+  const firstOpenTask = useMemo(() => tasks.find((task) => task.status !== 'done'), [tasks]);
+  const firstReviewTask = useMemo(() => tasks.find((task) => task.status === 'review'), [tasks]);
+  const firstReadyTask = useMemo(() => tasks.find((task) => task.status === 'ready'), [tasks]);
+  const commitFocusRepo = useMemo(() => {
+    const sortable = [...repositories];
+    sortable.sort((left, right) => new Date(right.lastUpdated).getTime() - new Date(left.lastUpdated).getTime());
+    return sortable[0];
+  }, [repositories]);
 
   const [showFailedPanel, setShowFailedPanel] = useState(false);
+
+  const getRelatedRepoFromLog = (log: ActivityLog) => {
+    if (!log.meta) {
+      return repoByName.get(log.target.trim().toLocaleLowerCase('pt-BR'));
+    }
+
+    const trimmedMeta = log.meta.trim();
+    if (!(trimmedMeta.startsWith('{') && trimmedMeta.endsWith('}'))) {
+      return repoByName.get(log.target.trim().toLocaleLowerCase('pt-BR'));
+    }
+
+    try {
+      const parsed = JSON.parse(trimmedMeta) as { repoId?: string };
+      if (parsed.repoId) return repoById.get(parsed.repoId);
+    } catch {
+      return repoByName.get(log.target.trim().toLocaleLowerCase('pt-BR'));
+    }
+
+    return repoByName.get(log.target.trim().toLocaleLowerCase('pt-BR'));
+  };
 
   return (
     <div className="page-container page-shell page-stack">
@@ -305,21 +425,29 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
             </div>
           </div>
           <div className="grid grid-cols-1 gap-3 px-6 py-5 sm:grid-cols-3">
-            <div className={`${executiveInsetCard} p-4`}>
+            <button type="button" onClick={() => onNavigate(ViewState.REPOS)} className={`${executiveInsetCard} p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary-500/20 hover:shadow-[0_22px_34px_-30px_rgba(14,165,233,0.16)]`}>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-[var(--text-muted)]">Repositórios ativos</p>
               <p className="mt-3 text-3xl font-light text-slate-800 dark:text-[var(--text-primary)]">{activeReposCount}</p>
               <p className="mt-2 text-sm text-slate-500 dark:text-[var(--text-muted)]">Base operacional em monitoramento contínuo.</p>
-            </div>
-            <div className={`${executiveInsetCard} border-blue-200/60 bg-blue-50/50 p-4 dark:border-white/10 dark:bg-white/[0.03]`}>
+            </button>
+            <button
+              type="button"
+              onClick={() => firstReadyTask ? onOpenTask(firstReadyTask) : onNavigate(ViewState.KANBAN)}
+              className={`${executiveInsetCard} border-blue-200/60 bg-blue-50/50 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary-500/20 hover:shadow-[0_22px_34px_-30px_rgba(14,165,233,0.16)] dark:border-white/10 dark:bg-white/[0.03]`}
+            >
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-[var(--text-muted)]">Prontas para release</p>
               <p className="mt-3 text-3xl font-light text-slate-800 dark:text-[var(--text-primary)]">{readyForReleaseCount}</p>
               <p className="mt-2 text-sm text-slate-500 dark:text-[var(--text-muted)]">Itens já preparados para promover entrega.</p>
-            </div>
-            <div className={`${executiveInsetCard} ${failedRepoCount > 0 ? 'border-red-200/70 bg-red-50/55' : 'border-emerald-200/70 bg-emerald-50/55'} p-4 dark:border-white/10 dark:bg-white/[0.03]`}>
+            </button>
+            <button
+              type="button"
+              onClick={() => failedRepoCount > 0 ? setShowFailedPanel(true) : onNavigate(ViewState.REPOS)}
+              className={`${executiveInsetCard} ${failedRepoCount > 0 ? 'border-red-200/70 bg-red-50/55' : 'border-emerald-200/70 bg-emerald-50/55'} p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary-500/20 hover:shadow-[0_22px_34px_-30px_rgba(14,165,233,0.16)] dark:border-white/10 dark:bg-white/[0.03]`}
+            >
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-[var(--text-muted)]">Risco atual</p>
               <p className={`mt-3 text-3xl font-light ${failedRepoCount > 0 ? 'text-red-600 dark:text-red-300' : 'text-emerald-600 dark:text-emerald-300'}`}>{failedRepoCount}</p>
               <p className="mt-2 text-sm text-slate-500 dark:text-[var(--text-muted)]">Repositórios exigindo ação imediata.</p>
-            </div>
+            </button>
           </div>
           <div className="flex flex-wrap gap-3 border-t border-slate-200/70 bg-slate-50/35 px-6 py-4 dark:border-white/10 dark:bg-transparent">
             <button
@@ -501,7 +629,11 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
                 task={log.targetType === 'issue'
                   ? (log.taskId ? taskById.get(log.taskId) : taskByTitle.get(log.target.trim().toLocaleLowerCase('pt-BR')))
                   : undefined}
+                repo={log.targetType === 'issue' ? undefined : getRelatedRepoFromLog(log)}
                 onOpenTask={onOpenTask}
+                onOpenRepo={onOpenRepo}
+                onOpenRepoInGit={onOpenRepoInGit}
+                onNavigate={onNavigate}
               />
             ))}
             {activities.length === 0 && (
@@ -534,23 +666,56 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
                 {displayedRepos.map(repo => {
                   const isBroken = (repo as any).pathMissing || failedRepoDetails.some(f => f.id === repo.id);
                   return (
-                    <button type="button" key={repo.id} onClick={() => onOpenRepo(repo.id)} className={`mb-3 flex w-full items-center justify-between rounded-2xl border p-3 text-left transition-all group ${isBroken ? 'border-red-200/60 bg-red-50/55 shadow-[inset_0_1px_0_rgba(255,255,255,0.56)] hover:border-red-200/90 hover:bg-red-50/80 hover:shadow-[0_18px_34px_-30px_rgba(239,68,68,0.2),inset_0_1px_0_rgba(255,255,255,0.6)] dark:border-red-900/30 dark:bg-white/[0.03] dark:shadow-none dark:hover:border-red-700 dark:hover:bg-red-900/10' : 'border-slate-200/70 bg-slate-50/58 shadow-[inset_0_1px_0_rgba(255,255,255,0.56)] hover:border-primary-500/20 hover:bg-slate-50/85 hover:shadow-[0_18px_34px_-30px_rgba(14,165,233,0.18),inset_0_1px_0_rgba(255,255,255,0.6)] dark:border-white/10 dark:bg-white/[0.015] dark:shadow-none dark:hover:bg-white/[0.04]'}`}>
-                      <div className="flex items-center gap-3 overflow-hidden">
-                        {isBroken
-                          ? <AlertTriangle className="w-4 h-4 flex-shrink-0 text-red-400" />
-                          : <FolderGit2 className="w-5 h-5 flex-shrink-0 transition-colors text-slate-400 group-hover:text-primary-500" />
-                        }
-                        <div className="overflow-hidden">
-                          <span className={`block truncate text-sm font-medium ${isBroken ? 'text-red-600 dark:text-red-300' : 'text-slate-800 dark:text-slate-200 group-hover:text-primary-600 dark:group-hover:text-primary-300'}`}>
-                            {repo.name}
-                          </span>
-                          <span className={`mt-0.5 block truncate text-[10px] ${isBroken ? 'text-red-400 dark:text-red-500' : 'text-slate-500 dark:text-slate-500'}`}>
-                            {isBroken ? failedRepoDetails.find(f => f.id === repo.id)?.reason || 'Diretório não encontrado' : repo.description || 'Repositório conectado ao workspace'}
-                          </span>
+                    <article
+                      key={repo.id}
+                      className={`mb-3 flex w-full items-center justify-between rounded-2xl border p-3 text-left transition-all group ${isBroken ? 'border-red-200/60 bg-red-50/55 shadow-[inset_0_1px_0_rgba(255,255,255,0.56)] hover:border-red-200/90 hover:bg-red-50/80 hover:shadow-[0_18px_34px_-30px_rgba(239,68,68,0.2),inset_0_1px_0_rgba(255,255,255,0.6)] dark:border-red-900/30 dark:bg-white/[0.03] dark:shadow-none dark:hover:border-red-700 dark:hover:bg-red-900/10' : 'border-slate-200/70 bg-slate-50/58 shadow-[inset_0_1px_0_rgba(255,255,255,0.56)] hover:border-primary-500/20 hover:bg-slate-50/85 hover:shadow-[0_18px_34px_-30px_rgba(14,165,233,0.18),inset_0_1px_0_rgba(255,255,255,0.6)] dark:border-white/10 dark:bg-white/[0.015] dark:shadow-none dark:hover:bg-white/[0.04]'}`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <button
+                          type="button"
+                          onClick={() => onOpenRepo(repo.id)}
+                          className="flex w-full items-center justify-between gap-3 text-left"
+                        >
+                          <div className="flex min-w-0 items-center gap-3 overflow-hidden">
+                            {isBroken
+                              ? <AlertTriangle className="w-4 h-4 flex-shrink-0 text-red-400" />
+                              : <FolderGit2 className="w-5 h-5 flex-shrink-0 transition-colors text-slate-400 group-hover:text-primary-500" />
+                            }
+                            <div className="overflow-hidden">
+                              <span className={`block truncate text-sm font-medium ${isBroken ? 'text-red-600 dark:text-red-300' : 'text-slate-800 dark:text-slate-200 group-hover:text-primary-600 dark:group-hover:text-primary-300'}`}>
+                                {repo.name}
+                              </span>
+                              <span className={`mt-0.5 block truncate text-[10px] ${isBroken ? 'text-red-400 dark:text-red-500' : 'text-slate-500 dark:text-slate-500'}`}>
+                                {isBroken ? failedRepoDetails.find(f => f.id === repo.id)?.reason || 'Diretório não encontrado' : repo.description || 'Repositório conectado ao workspace'}
+                              </span>
+                            </div>
+                          </div>
+                          <span className={`w-2.5 h-2.5 flex-shrink-0 rounded-full shadow-sm ${getRepoStatusDotClass(isBroken, repo.status)}`}></span>
+                        </button>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onOpenRepo(repo.id);
+                            }}
+                            className={actionPillClassName}
+                          >
+                            Código
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onOpenRepoInGit(repo.id, 'changes');
+                            }}
+                            className={actionPillClassName}
+                          >
+                            Commits
+                          </button>
                         </div>
                       </div>
-                      <span className={`w-2.5 h-2.5 flex-shrink-0 rounded-full shadow-sm ${getRepoStatusDotClass(isBroken, repo.status)}`}></span>
-                    </button>
+                    </article>
                   );
                 })}
               </>

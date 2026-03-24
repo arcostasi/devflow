@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { GitChange, FileNode, ActivityLog, Repository, GitCommit } from '../types';
+import { GitChange, FileNode, ActivityLog, Repository, GitCommit, GitIntegrationTab } from '../types';
 import { api } from '../services/api';
 import { GitBranch, RefreshCw, Check, Undo2, Plus, FileCode, FilePlus, FileMinus, ChevronRight, ChevronDown, Sparkles, ArrowDown, ArrowUp, Folder, FolderOpen, BarChart3, Zap, Flame, FolderGit2, Link, Settings2, AlertTriangle, Trash2 } from 'lucide-react';
 import { useConfirm } from '../contexts/ConfirmContext';
@@ -112,6 +112,8 @@ interface GitIntegrationProps {
     addToast: (title: string, type: 'success' | 'error' | 'info', desc?: string) => void;
     logActivity: (action: string, target: string, targetType: ActivityLog['targetType'], meta?: string) => void;
     onRefreshData?: () => void;
+    preferredRepoId?: string | null;
+    preferredTab?: GitIntegrationTab;
 }
 
 
@@ -454,15 +456,15 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({ repoFiles, changes, repoI
     );
 };
 
-const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logActivity, onRefreshData }) => {
+const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logActivity, onRefreshData, preferredRepoId, preferredTab }) => {
     const hasRepositories = (repos || []).length > 0;
     const { confirm } = useConfirm();
     // Estado para repositório selecionado
-    const [selectedRepoId, setSelectedRepoId] = useState<string | null>(repos.length > 0 ? repos[0].id : null);
+    const [selectedRepoId, setSelectedRepoId] = useState<string | null>(preferredRepoId || (repos.length > 0 ? repos[0].id : null));
     const selectedRepo = repos.find(r => r.id === selectedRepoId);
 
     // Todos os hooks devem ser declarados antes de qualquer return condicional
-    const [activeTab, setActiveTab] = useState<'changes' | 'source' | 'insights'>('changes');
+    const [activeTab, setActiveTab] = useState<GitIntegrationTab>(preferredTab || 'changes');
     const [changes, setChanges] = useState<GitChange[]>([]);
     const [stagedChanges, setStagedChanges] = useState<GitChange[]>([]);
     const [commitMessage, setCommitMessage] = useState('');
@@ -500,6 +502,32 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
             if (newWidth > 200 && newWidth < 800) setLeftPanelWidth(newWidth);
         }
     }, [isResizing]);
+
+    useEffect(() => {
+        if (preferredRepoId && repos.some((repo) => repo.id === preferredRepoId) && preferredRepoId !== selectedRepoId) {
+            setSelectedRepoId(preferredRepoId);
+            return;
+        }
+
+        if (!preferredRepoId && selectedRepoId && repos.some((repo) => repo.id === selectedRepoId)) {
+            return;
+        }
+
+        if (!selectedRepoId && repos.length > 0) {
+            setSelectedRepoId(repos[0].id);
+            return;
+        }
+
+        if (selectedRepoId && !repos.some((repo) => repo.id === selectedRepoId)) {
+            setSelectedRepoId(repos.length > 0 ? repos[0].id : null);
+        }
+    }, [preferredRepoId, repos, selectedRepoId]);
+
+    useEffect(() => {
+        if (preferredTab && preferredTab !== activeTab) {
+            setActiveTab(preferredTab);
+        }
+    }, [preferredTab, activeTab]);
 
     useEffect(() => {
         if (isResizing) {
@@ -703,11 +731,33 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
         const deleted = stagedChanges.filter(c => c.status === 'deleted').map(c => c.file);
         const modified = stagedChanges.filter(c => c.status === 'modified').map(c => c.file);
 
-        const { prefix, scope } = getCommitClassification(files, added.length, deleted.length, modified.length);
-        const description = getCommitDescription(files);
-        const msg = scope ? `${prefix}(${scope}): ${description}` : `${prefix}: ${description}`;
-        setCommitMessage(msg);
-        setIsGenerating(false);
+        api.fillAIField({
+            fieldType: 'commit_message',
+            context: {
+                repositoryName: selectedRepo?.name || '',
+                currentBranch,
+                stagedFiles: stagedChanges.map(change => ({
+                    file: change.file,
+                    status: change.status,
+                })),
+                changeSummary: {
+                    added: added.length,
+                    deleted: deleted.length,
+                    modified: modified.length,
+                },
+            },
+        })
+            .then((result) => {
+                setCommitMessage(result.value || '');
+            })
+            .catch(() => {
+                const { prefix, scope } = getCommitClassification(files, added.length, deleted.length, modified.length);
+                const description = getCommitDescription(files);
+                const msg = scope ? `${prefix}(${scope}): ${description}` : `${prefix}: ${description}`;
+                setCommitMessage(msg);
+                addToast('IA indisponível', 'info', 'Foi usado o gerador local de fallback para a mensagem de commit.');
+            })
+            .finally(() => setIsGenerating(false));
     };
 
     const handleCommit = async () => {
@@ -1145,6 +1195,9 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
                                 <textarea className="app-input h-24 w-full resize-none rounded-2xl px-3 py-2.5 pr-10 text-sm font-sans leading-6 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:opacity-50 dark:text-slate-200" placeholder="Mensagem do commit..." value={commitMessage} onChange={(e) => setCommitMessage(e.target.value)} disabled={isGenerating}></textarea>
                                 <button onClick={generateCommitMessage} disabled={stagedChanges.length === 0 || isGenerating} className="app-soft-icon-button absolute right-2 top-2 rounded-xl p-2 text-primary-600 dark:text-primary-300 disabled:opacity-30" title="Gerar mensagem sugerida"><Sparkles className={`w-4 h-4 ${isGenerating ? 'animate-pulse' : ''}`} /></button>
                             </div>
+                            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                                A IA usa branch atual, repositório e arquivos em stage para sugerir uma mensagem de commit coerente. Se o Ollama falhar, o DevFlow usa o gerador local de fallback.
+                            </p>
                             <div className="flex gap-2 mt-2">
                                 <button onClick={handleCommit} disabled={stagedChanges.length === 0 || !commitMessage.trim() || isGenerating} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary-600 py-2.5 text-sm font-medium text-white transition-colors shadow-md shadow-primary-500/20 hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">
                                     <Check className="w-4 h-4" /> Commit

@@ -24,6 +24,8 @@ interface RepoListProps {
   onDelete: (id: string) => void;
   onOpenNewRepo: () => void;
   onRepoClick: (id: string) => void;
+  onRepoGitClick?: (id: string) => void;
+  onRepoIssuesClick?: (id: string) => void;
 }
 
 const getStatusLabel = (repo: Repository) => {
@@ -78,7 +80,9 @@ const formatRepositoryTimestamp = (value: string) => {
 const repoInsetCard =
   'rounded-2xl border border-slate-200/75 bg-slate-50/78 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none';
 
-const RepositoryList: React.FC<RepoListProps> = ({ repos, onDelete, onOpenNewRepo, onRepoClick }) => {
+const quickActionClassName = 'inline-flex items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/78 px-2.5 py-1 text-[11px] font-medium text-slate-600 shadow-sm shadow-slate-200/40 transition-all hover:border-primary-500/25 hover:text-primary-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:shadow-none dark:hover:text-primary-300';
+
+const RepositoryList: React.FC<RepoListProps> = ({ repos, onDelete, onOpenNewRepo, onRepoClick, onRepoGitClick, onRepoIssuesClick }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'archived'>('all');
   const { confirm } = useConfirm();
@@ -325,6 +329,39 @@ const RepositoryList: React.FC<RepoListProps> = ({ repos, onDelete, onOpenNewRep
                                 {repo.issues} issues
                               </div>
                             )}
+                          </div>
+
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onRepoClick(repo.id);
+                              }}
+                              className={quickActionClassName}
+                            >
+                              Abrir
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onRepoGitClick?.(repo.id);
+                              }}
+                              className={quickActionClassName}
+                            >
+                              Commits
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onRepoIssuesClick?.(repo.id);
+                              }}
+                              className={quickActionClassName}
+                            >
+                              Issues
+                            </button>
                           </div>
                         </div>
                       </div>

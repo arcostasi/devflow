@@ -1,27 +1,50 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useMemo } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
-import Dashboard from './components/Dashboard';
-import { Kanban } from './components/Kanban';
-import Backlog from './components/Backlog';
-import GitIntegration from './components/GitIntegration';
-import RepositoryList from './components/RepositoryList';
-import Settings from './components/Settings';
 import CommandPalette from './components/CommandPalette';
 import ToastContainer from './components/Toast';
 import NewTaskModal from './components/NewTaskModal';
 import NewRepoModal from './components/NewRepoModal';
-import RepoDetail from './components/RepoDetail';
 import ManageSprintsModal from './components/ManageSprintsModal';
 import LoginPage from './components/LoginPage';
-import Environments from './components/Environments';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ConfirmProvider } from './contexts/ConfirmContext';
-import { ViewState, ThemeMode, DensityMode, ToastMessage, Task, TaskStatus, Repository, ActivityLog, Sprint } from './types';
+import {
+  ViewState,
+  ThemeMode,
+  DensityMode,
+  ToastMessage,
+  Task,
+  TaskStatus,
+  Repository,
+  ActivityLog,
+  Sprint,
+  RepoDetailTab,
+  GitIntegrationTab,
+  WorkspaceNavigationTarget,
+} from './types';
 import { initialActivities } from './services/data';
 import { api } from './services/api';
 import { Loader2 } from 'lucide-react';
+
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const Kanban = lazy(() => import('./components/Kanban').then((module) => ({ default: module.Kanban })));
+const Backlog = lazy(() => import('./components/Backlog'));
+const GitIntegration = lazy(() => import('./components/GitIntegration'));
+const RepositoryList = lazy(() => import('./components/RepositoryList'));
+const Settings = lazy(() => import('./components/Settings'));
+const RepoDetail = lazy(() => import('./components/RepoDetail'));
+const Environments = lazy(() => import('./components/Environments'));
+
+const ScreenLoader: React.FC = () => (
+  <div className="flex min-h-[40vh] items-center justify-center">
+    <div className="inline-flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-white/82 px-4 py-3 text-sm text-slate-600 shadow-sm shadow-slate-200/50 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:shadow-none">
+      <Loader2 className="h-4 w-4 animate-spin text-primary-500" />
+      Carregando tela...
+    </div>
+  </div>
+);
 
 const AppContent: React.FC = () => {
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -36,6 +59,7 @@ const AppContent: React.FC = () => {
   const [isNewRepoModalOpen, setIsNewRepoModalOpen] = useState(false);
   const [selectedRepoId, setSelectedRepoId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [navigationTarget, setNavigationTarget] = useState<WorkspaceNavigationTarget | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [activities, setActivities] = useState<ActivityLog[]>(initialActivities);
 
@@ -197,14 +221,41 @@ const AppContent: React.FC = () => {
     }
   };
 
-  const handleOpenTask = (task: Task) => {
+  const handleOpenTask = (task: Task, source: WorkspaceNavigationTarget['source'] = 'dashboard') => {
+    setNavigationTarget({ source, taskId: task.id });
     setSelectedTaskId(task.id);
     setCurrentView(ViewState.KANBAN);
   };
 
-  const handleOpenRepo = (id: string) => {
+  const handleOpenRepo = (
+    id: string,
+    options: {
+      tab?: RepoDetailTab;
+      source?: WorkspaceNavigationTarget['source'];
+    } = {}
+  ) => {
+    setNavigationTarget({
+      source: options.source || 'dashboard',
+      repoId: id,
+      repoDetailTab: options.tab || 'code',
+    });
     setSelectedRepoId(id);
     setCurrentView(ViewState.REPO_DETAIL);
+  };
+
+  const handleOpenRepoGit = (
+    id: string,
+    options: {
+      tab?: GitIntegrationTab;
+      source?: WorkspaceNavigationTarget['source'];
+    } = {}
+  ) => {
+    setNavigationTarget({
+      source: options.source || 'dashboard',
+      repoId: id,
+      gitTab: options.tab || 'changes',
+    });
+    setCurrentView(ViewState.GIT);
   };
 
   const renderView = () => {
@@ -218,8 +269,9 @@ const AppContent: React.FC = () => {
             onNavigate={setCurrentView}
             onCreateTask={() => openNewTaskModal('todo')}
             onCreateRepo={() => setIsNewRepoModalOpen(true)}
-            onOpenRepo={handleOpenRepo}
-            onOpenTask={handleOpenTask}
+            onOpenRepo={(id) => handleOpenRepo(id, { source: 'dashboard' })}
+            onOpenRepoInGit={(id, tab) => handleOpenRepoGit(id, { tab, source: 'dashboard' })}
+            onOpenTask={(task) => handleOpenTask(task, 'dashboard')}
             stats={dashboardStats}
           />
         );
@@ -256,6 +308,8 @@ const AppContent: React.FC = () => {
             addToast={addToast}
             logActivity={handleLogActivity}
             onRefreshData={loadData}
+            preferredRepoId={currentView === ViewState.GIT ? navigationTarget?.repoId ?? null : null}
+            preferredTab={currentView === ViewState.GIT ? navigationTarget?.gitTab : undefined}
           />
         );
       case ViewState.REPOS:
@@ -264,20 +318,35 @@ const AppContent: React.FC = () => {
             repos={repos}
             onOpenNewRepo={() => setIsNewRepoModalOpen(true)}
             onDelete={handleDeleteRepo}
-            onRepoClick={handleOpenRepo}
+            onRepoClick={(id) => handleOpenRepo(id, { source: 'repo_list' })}
+            onRepoGitClick={(id) => handleOpenRepoGit(id, { source: 'repo_list' })}
+            onRepoIssuesClick={(id) => handleOpenRepo(id, { tab: 'issues', source: 'repo_list' })}
           />
         );
       case ViewState.REPO_DETAIL: {
         const selectedRepo = repos.find(r => r.id === selectedRepoId);
-        if (!selectedRepo) return <RepositoryList repos={repos} onDelete={handleDeleteRepo} onOpenNewRepo={() => setIsNewRepoModalOpen(true)} onRepoClick={handleOpenRepo} />;
+        if (!selectedRepo) {
+          return (
+            <RepositoryList
+              repos={repos}
+              onDelete={handleDeleteRepo}
+              onOpenNewRepo={() => setIsNewRepoModalOpen(true)}
+              onRepoClick={(id) => handleOpenRepo(id, { source: 'repo_list' })}
+              onRepoGitClick={(id) => handleOpenRepoGit(id, { source: 'repo_list' })}
+              onRepoIssuesClick={(id) => handleOpenRepo(id, { tab: 'issues', source: 'repo_list' })}
+            />
+          );
+        }
         return (
           <RepoDetail
             repo={selectedRepo}
             tasks={tasks}
             onBack={() => setCurrentView(ViewState.REPOS)}
-            onNavigateToTask={handleOpenTask}
+            onNavigateToTask={(task) => handleOpenTask(task, 'repo_detail')}
             addToast={addToast}
             onDeleteRepo={handleDeleteRepo}
+            initialTab={navigationTarget?.repoId === selectedRepo.id ? navigationTarget?.repoDetailTab : undefined}
+            onOpenGit={(repoId) => handleOpenRepoGit(repoId, { source: 'repo_detail' })}
           />
         );
       }
@@ -300,7 +369,9 @@ const AppContent: React.FC = () => {
             onNavigate={setCurrentView}
             onCreateTask={() => openNewTaskModal('todo')}
             onCreateRepo={() => setIsNewRepoModalOpen(true)}
-            onOpenRepo={handleOpenRepo}
+            onOpenRepo={(id) => handleOpenRepo(id, { source: 'dashboard' })}
+            onOpenRepoInGit={(id, tab) => handleOpenRepoGit(id, { tab, source: 'dashboard' })}
+            onOpenTask={(task) => handleOpenTask(task, 'dashboard')}
           />
         );
     }
@@ -344,7 +415,7 @@ const AppContent: React.FC = () => {
         openNewTaskModal={() => openNewTaskModal('todo')}
         tasks={tasks}
         repos={repos}
-        onSelectTask={handleSelectTask => handleOpenTask(handleSelectTask)}
+        onSelectTask={(task) => handleOpenTask(task, 'command_palette')}
       />
 
       <NewTaskModal
@@ -384,7 +455,9 @@ const AppContent: React.FC = () => {
         />
 
         <main className="app-workspace-body flex-1 overflow-y-auto">
-          {renderView()}
+          <Suspense fallback={<ScreenLoader />}>
+            {renderView()}
+          </Suspense>
         </main>
       </div>
     </div>
