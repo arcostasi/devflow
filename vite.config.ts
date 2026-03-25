@@ -22,19 +22,18 @@ export default defineConfig(({ mode }) => {
     build: {
       rollupOptions: {
         output: {
-          manualChunks: {
-            // Separar React e React DOM
-            'vendor-react': ['react', 'react-dom'],
-            // Separar syntax highlighter (muito grande)
-            'vendor-syntax': ['react-syntax-highlighter'],
-            // Separar markdown
-            'vendor-markdown': ['react-markdown', 'remark-gfm'],
-            // Separar ícones
-            'vendor-icons': ['lucide-react'],
-          }
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return undefined;
+
+            if (id.includes('react-syntax-highlighter')) return 'vendor-syntax';
+            if (id.includes('react-markdown') || id.includes('remark-gfm')) return 'vendor-markdown';
+            if (id.includes('lucide-react')) return 'vendor-icons';
+            if (id.includes('/react/') || id.includes('\\react\\') || id.includes('react-dom')) return 'vendor-react';
+
+            return undefined;
+          },
         }
       },
-      // Aumentar limite de aviso para 600kB (opcional)
       chunkSizeWarningLimit: 600,
     }
   };
