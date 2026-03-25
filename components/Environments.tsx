@@ -14,6 +14,8 @@ interface EnvironmentsProps {
     repositories: Repository[];
     addToast: (title: string, type: 'success' | 'error' | 'info', desc?: string) => void;
     onNavigateToGit?: () => void;
+    preferredRepoId?: string | null;
+    preferredEnvironmentId?: string | null;
 }
 
 interface EnvWithDeployments extends Environment {
@@ -100,7 +102,8 @@ const EnvironmentCard: React.FC<{
     onEdit?: () => void;
     onQuickSave?: (envId: string, updates: { description?: string; internalNotes?: string }) => Promise<void>;
     canPromote?: boolean;
-}> = ({ env, onPromote, onRollback, onEdit, onQuickSave, canPromote }) => {
+    highlighted?: boolean;
+}> = ({ env, onPromote, onRollback, onEdit, onQuickSave, canPromote, highlighted = false }) => {
     const [expanded, setExpanded] = useState(false);
     const [isInlineEditing, setIsInlineEditing] = useState(false);
     const [draftDescription, setDraftDescription] = useState(env.description || '');
@@ -185,7 +188,10 @@ const EnvironmentCard: React.FC<{
     };
 
     return (
-        <div className={`surface-card overflow-hidden rounded-[1.35rem] border border-slate-200/75 border-t-4 bg-white/88 shadow-sm shadow-slate-200/60 ${type.border} dark:border-white/10 dark:bg-transparent dark:shadow-none`}>
+        <div
+            data-environment-id={env.id}
+            className={`surface-card overflow-hidden rounded-[1.35rem] border border-slate-200/75 border-t-4 bg-white/88 shadow-sm shadow-slate-200/60 transition-all ${type.border} ${highlighted ? 'ring-2 ring-primary-500/40 shadow-[0_0_0_1px_rgba(14,165,233,0.16),0_18px_40px_-28px_rgba(14,165,233,0.35)] dark:ring-primary-400/40' : ''} dark:border-white/10 dark:bg-transparent dark:shadow-none`}
+        >
             <div className="p-5">
                 <div className="mb-5 flex items-start justify-between gap-4">
                     <div className="flex items-center gap-3">
@@ -936,7 +942,7 @@ const EditEnvironmentModal: React.FC<{
     );
 };
 
-const Environments: React.FC<EnvironmentsProps> = ({ repositories, addToast, onNavigateToGit }) => {
+const Environments: React.FC<EnvironmentsProps> = ({ repositories, addToast, onNavigateToGit, preferredRepoId = null, preferredEnvironmentId = null }) => {
     const { confirm } = useConfirm();
     const [environments, setEnvironments] = useState<EnvWithDeployments[]>([]);
     const [loading, setLoading] = useState(true);
@@ -944,6 +950,7 @@ const Environments: React.FC<EnvironmentsProps> = ({ repositories, addToast, onN
     const [deployModal, setDeployModal] = useState<{ isOpen: boolean; envId: string; repoName: string } | null>(null);
     const [isNewEnvModalOpen, setIsNewEnvModalOpen] = useState(false);
     const [editingEnvironment, setEditingEnvironment] = useState<EnvWithDeployments | null>(null);
+    const [highlightedEnvironmentId, setHighlightedEnvironmentId] = useState<string | null>(null);
 
     const loadEnvironments = async () => {
         setLoading(true);
@@ -985,6 +992,31 @@ const Environments: React.FC<EnvironmentsProps> = ({ repositories, addToast, onN
     useEffect(() => {
         loadEnvironments();
     }, [selectedRepo, repositories]);
+
+    useEffect(() => {
+        if (!preferredRepoId) return;
+        setSelectedRepo((current) => current === preferredRepoId ? current : preferredRepoId);
+    }, [preferredRepoId]);
+
+    useEffect(() => {
+        if (!preferredEnvironmentId || loading) return;
+
+        setHighlightedEnvironmentId(preferredEnvironmentId);
+
+        const timeout = setTimeout(() => {
+            const element = document.querySelector<HTMLElement>(`[data-environment-id="${preferredEnvironmentId}"]`);
+            element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 180);
+
+        const clearHighlight = setTimeout(() => {
+            setHighlightedEnvironmentId((current) => current === preferredEnvironmentId ? null : current);
+        }, 3200);
+
+        return () => {
+            clearTimeout(timeout);
+            clearTimeout(clearHighlight);
+        };
+    }, [preferredEnvironmentId, loading, environments]);
 
     const handleDeploy = async (version: string, notes: string) => {
         if (!deployModal) return;
@@ -1172,17 +1204,27 @@ const Environments: React.FC<EnvironmentsProps> = ({ repositories, addToast, onN
 
                 <div className="surface-card panel-body-block rounded-[1.6rem]">
                     {loading ? (
-                        <div className="flex items-center justify-center h-64">
-                            <RefreshCw className="w-8 h-8 text-primary-500 animate-spin" />
+                        <div className="grid h-64 place-items-center rounded-2xl border border-dashed border-slate-200/80 bg-slate-50/45 text-center dark:border-white/10 dark:bg-white/[0.02]">
+                            <div className="max-w-md px-6">
+                                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200/80 bg-white/80 shadow-sm shadow-slate-200/50 dark:border-white/10 dark:bg-white/[0.04] dark:shadow-none">
+                                    <RefreshCw className="h-6 w-6 animate-spin text-primary-500" />
+                                </div>
+                                <h3 className="text-lg font-semibold text-slate-800 dark:text-white">Sincronizando ambientes</h3>
+                                <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-[var(--text-muted)]">
+                                    Carregando histórico de deploy, estados operacionais e vínculos com repositórios.
+                                </p>
+                            </div>
                         </div>
                     ) : Object.keys(envsByRepo).length === 0 ? (
-                        <div className="text-center py-16 surface-empty rounded-2xl">
-                            <Cloud className="w-16 h-16 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
-                            <h3 className="text-lg font-medium text-slate-600 dark:text-slate-400 mb-2">Nenhum ambiente configurado</h3>
-                            <p className="text-sm text-slate-500 mb-4">Configure ambientes dev, stage e prod para seus repositórios</p>
+                        <div className="surface-empty rounded-2xl px-6 py-16 text-center">
+                            <Cloud className="mx-auto mb-4 h-16 w-16 text-slate-300 dark:text-slate-600" />
+                            <h3 className="text-lg font-medium text-slate-700 dark:text-slate-300 mb-2">Nenhum ambiente configurado</h3>
+                            <p className="mx-auto mb-4 max-w-md text-sm leading-6 text-slate-500 dark:text-[var(--text-muted)]">
+                                Comece mapeando dev, stage e prod para transformar deploy, rollback e histórico operacional em um fluxo visível dentro do workspace.
+                            </p>
                             <button
                                 onClick={() => setIsNewEnvModalOpen(true)}
-                                className="px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 mx-auto"
+                                className="mx-auto inline-flex items-center gap-2 rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg shadow-primary-900/15 transition-colors hover:bg-primary-700"
                             >
                                 <Plus className="w-4 h-4" />
                                 Criar Ambiente
@@ -1217,6 +1259,7 @@ const Environments: React.FC<EnvironmentsProps> = ({ repositories, addToast, onN
                                                         onRollback={() => handleRollback(env)}
                                                         onEdit={() => setEditingEnvironment(env)}
                                                         onQuickSave={handleQuickUpdateEnvironment}
+                                                        highlighted={highlightedEnvironmentId === env.id}
                                                     />
                                                     {env.type === 'dev' && (
                                                         <button

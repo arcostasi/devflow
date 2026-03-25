@@ -1,7 +1,9 @@
 import {
+    ActivityLog,
     Task,
     Repository,
     Sprint,
+    Environment,
     User,
     GitChange,
     GitCommit,
@@ -40,7 +42,7 @@ const handleResponse = async (res: Response, _fallbackMsg: string): Promise<Resp
 
 export const api = {
     // Activities
-    getActivities: async (): Promise<any[]> => {
+    getActivities: async (): Promise<ActivityLog[]> => {
         const res = await fetch(`${API_URL}/activities`, { headers: getAuthHeaders() });
         await handleResponse(res, 'Falha ao carregar atividades');
         if (!res.ok) throw new Error('Falha ao carregar atividades');
@@ -475,14 +477,14 @@ export const api = {
     },
 
     // MVP-2: Environments
-    getEnvironments: async (repoId?: string): Promise<any[]> => {
+    getEnvironments: async (repoId?: string): Promise<Environment[]> => {
         const params = repoId ? `?repoId=${repoId}` : '';
         const res = await fetch(`${API_URL}/environments${params}`, { headers: getAuthHeaders() });
         if (!res.ok) throw new Error('Falha ao carregar ambientes');
         return res.json();
     },
 
-    getEnvironment: async (id: string): Promise<any> => {
+    getEnvironment: async (id: string): Promise<Environment & { deployments: any[] }> => {
         const res = await fetch(`${API_URL}/environments/${id}`, { headers: getAuthHeaders() });
         if (!res.ok) throw new Error('Falha ao carregar ambiente');
         return res.json();

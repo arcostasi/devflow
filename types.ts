@@ -200,7 +200,7 @@ export interface ActivityLog {
   user: User;
   action: string;
   target: string;
-  targetType: 'repo' | 'pr' | 'issue' | 'commit' | 'sprint';
+  targetType: 'repo' | 'pr' | 'issue' | 'commit' | 'sprint' | 'environment';
   taskId?: string;
   timestamp: string;
   meta?: string;
@@ -286,9 +286,10 @@ export type RepoDetailTab = 'code' | 'issues' | 'settings';
 export type GitIntegrationTab = 'changes' | 'source' | 'insights';
 
 export interface WorkspaceNavigationTarget {
-  source?: 'dashboard' | 'repo_list' | 'repo_detail' | 'activity' | 'command_palette';
+  source?: 'dashboard' | 'repo_list' | 'repo_detail' | 'activity' | 'command_palette' | 'environments';
   repoId?: string | null;
   taskId?: string | null;
+  environmentId?: string | null;
   repoDetailTab?: RepoDetailTab;
   gitTab?: GitIntegrationTab;
 }

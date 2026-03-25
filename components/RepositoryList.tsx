@@ -21,6 +21,7 @@ import { useConfirm } from '../contexts/ConfirmContext';
 
 interface RepoListProps {
   repos: Repository[];
+  isLoading?: boolean;
   onDelete: (id: string) => void;
   onOpenNewRepo: () => void;
   onRepoClick: (id: string) => void;
@@ -59,6 +60,7 @@ const getRepoIconClassName = (repo: Repository) => {
 };
 
 const getPipelineStatus = (repo: Repository) => (repo as any).lastPipelineStatus as 'success' | 'failed' | 'running' | undefined;
+const operationalIconWrap = 'flex h-12 w-12 min-w-12 items-center justify-center rounded-2xl';
 
 const repositoryDateFormatter = new Intl.DateTimeFormat('pt-BR', {
   day: '2-digit',
@@ -82,7 +84,7 @@ const repoInsetCard =
 
 const quickActionClassName = 'inline-flex items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/78 px-2.5 py-1 text-[11px] font-medium text-slate-600 shadow-sm shadow-slate-200/40 transition-all hover:border-primary-500/25 hover:text-primary-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:shadow-none dark:hover:text-primary-300';
 
-const RepositoryList: React.FC<RepoListProps> = ({ repos, onDelete, onOpenNewRepo, onRepoClick, onRepoGitClick, onRepoIssuesClick }) => {
+const RepositoryList: React.FC<RepoListProps> = ({ repos, isLoading = false, onDelete, onOpenNewRepo, onRepoClick, onRepoGitClick, onRepoIssuesClick }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'archived'>('all');
   const { confirm } = useConfirm();
@@ -178,7 +180,7 @@ const RepositoryList: React.FC<RepoListProps> = ({ repos, onDelete, onOpenNewRep
           <div className="mt-4 space-y-3.5">
             <div className={repoInsetCard}>
               <div className="flex items-start gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-500/[0.12] dark:text-emerald-300">
+                <div className={`${operationalIconWrap} bg-emerald-50 text-emerald-600 dark:bg-emerald-500/[0.12] dark:text-emerald-300`}>
                   <Rocket className="h-5 w-5" />
                 </div>
                 <div>
@@ -193,7 +195,7 @@ const RepositoryList: React.FC<RepoListProps> = ({ repos, onDelete, onOpenNewRep
             </div>
             <div className={repoInsetCard}>
               <div className="flex items-start gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 dark:bg-blue-500/[0.12] dark:text-blue-300">
+                <div className={`${operationalIconWrap} bg-blue-50 text-blue-600 dark:bg-blue-500/[0.12] dark:text-blue-300`}>
                   <Boxes className="h-5 w-5" />
                 </div>
                 <div>
@@ -206,7 +208,7 @@ const RepositoryList: React.FC<RepoListProps> = ({ repos, onDelete, onOpenNewRep
             </div>
             <div className={repoInsetCard}>
               <div className="flex items-start gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-50 text-amber-600 dark:bg-amber-500/[0.12] dark:text-amber-300">
+                <div className={`${operationalIconWrap} bg-amber-50 text-amber-600 dark:bg-amber-500/[0.12] dark:text-amber-300`}>
                   <ShieldAlert className="h-5 w-5" />
                 </div>
                 <div>
@@ -248,12 +250,30 @@ const RepositoryList: React.FC<RepoListProps> = ({ repos, onDelete, onOpenNewRep
             </select>
           </div>
           <div className="rounded-xl border border-slate-200/80 bg-slate-50/78 px-4 py-2.5 text-sm text-slate-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.03] dark:text-[var(--text-secondary)] dark:shadow-none">
-            {filteredRepos.length} resultados
+            {isLoading ? 'Sincronizando...' : `${filteredRepos.length} resultados`}
           </div>
         </div>
 
         <div className="grid gap-4">
-          {filteredRepos.length === 0 ? (
+          {isLoading ? (
+            Array.from({ length: 4 }).map((_, index) => (
+              <div key={`repo-loading-${index}`} className="rounded-[1.35rem] border border-slate-200/75 bg-white/88 p-5 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-transparent dark:shadow-none">
+                <div className="flex gap-4">
+                  <div className="h-12 w-12 animate-pulse rounded-2xl bg-slate-200/80 dark:bg-white/[0.08]" />
+                  <div className="flex-1 space-y-3">
+                    <div className="h-5 w-1/3 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                    <div className="h-4 w-3/4 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                    <div className="h-4 w-2/3 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                  </div>
+                </div>
+                <div className="mt-5 flex gap-2">
+                  <div className="h-8 w-16 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                  <div className="h-8 w-24 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                  <div className="h-8 w-20 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                </div>
+              </div>
+            ))
+          ) : filteredRepos.length === 0 ? (
             <div className="surface-empty rounded-[1.35rem] px-6 py-16 text-center">
               <GitBranch className="mx-auto mb-4 h-12 w-12 text-slate-300 dark:text-slate-500" />
               <h3 className="text-lg font-medium text-slate-700 dark:text-slate-200">Nenhum repositorio encontrado</h3>

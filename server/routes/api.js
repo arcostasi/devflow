@@ -937,6 +937,19 @@ router.post('/sprints', requireAuth, (req, res) => {
         if (!id || !name) return res.status(400).json({ error: 'ID e nome são obrigatórios' });
         const stmt = db.prepare('INSERT INTO sprints (id, name, goal, startDate, endDate, status) VALUES (?, ?, ?, ?, ?, ?)');
         stmt.run(id, name, goal, startDate, endDate, status);
+        createActivityLog({
+            userId: req.user.id,
+            action: 'criou sprint',
+            target: name,
+            targetType: 'sprint',
+            meta: JSON.stringify({
+                sprintId: id,
+                goal: goal || '',
+                startDate: startDate || null,
+                endDate: endDate || null,
+                status: status || 'future',
+            }),
+        });
         res.json({ message: 'Sprint created' });
     } catch (err) {
         res.status(500).json({ error: 'Falha ao criar sprint', details: err.message });
@@ -948,6 +961,11 @@ router.put('/sprints/:id', requireAuth, (req, res) => {
     const { status, goal, name, startDate, endDate } = req.body;
 
     try {
+        const existingSprint = db.prepare('SELECT * FROM sprints WHERE id = ?').get(id);
+        if (!existingSprint) {
+            return res.status(404).json({ error: 'Sprint não encontrada' });
+        }
+
         // If setting to active, simple check to ensure no other active sprints (optional, but good practice)
         if (status === 'active') {
             db.prepare('UPDATE sprints SET status = "completed" WHERE status = "active"').run();
@@ -966,6 +984,39 @@ router.put('/sprints/:id', requireAuth, (req, res) => {
 
         if (updates.length > 0) {
             db.prepare(`UPDATE sprints SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+        }
+
+        const sprintName = (name || existingSprint.name || 'Sprint').trim();
+        const metadata = JSON.stringify({
+            sprintId: id,
+            previousStatus: existingSprint.status,
+            nextStatus: status || existingSprint.status,
+            startDate: startDate || existingSprint.startDate || null,
+            endDate: endDate || existingSprint.endDate || null,
+        });
+
+        if (status && status !== existingSprint.status) {
+            const actionByStatus = {
+                active: 'iniciou sprint',
+                completed: 'concluiu sprint',
+                future: 'replanejou sprint',
+            };
+
+            createActivityLog({
+                userId: req.user.id,
+                action: actionByStatus[status] || 'atualizou sprint',
+                target: sprintName,
+                targetType: 'sprint',
+                meta: metadata,
+            });
+        } else if ((goal && goal !== existingSprint.goal) || (name && name !== existingSprint.name) || (startDate && startDate !== existingSprint.startDate) || (endDate && endDate !== existingSprint.endDate)) {
+            createActivityLog({
+                userId: req.user.id,
+                action: 'atualizou sprint',
+                target: sprintName,
+                targetType: 'sprint',
+                meta: metadata,
+            });
         }
 
         res.json({ message: 'Sprint updated' });
@@ -1012,6 +1063,9 @@ router.get('/tasks', requireAuth, (req, res) => {
             ...task,
             tags: task.tags ? JSON.parse(task.tags) : [],
             xpPractices: task.xpPractices ? JSON.parse(task.xpPractices) : {},
+            dorChecklist: task.dorChecklist ? JSON.parse(task.dorChecklist) : [],
+            dodChecklist: task.dodChecklist ? JSON.parse(task.dodChecklist) : [],
+            dependencies: task.dependencies ? JSON.parse(task.dependencies) : [],
             assignee: task.assignee_id ? { id: task.assignee_id, name: task.assignee_name, avatar: task.assignee_avatar } : undefined,
             pairAssignee: task.pair_id ? { id: task.pair_id, name: task.pair_name, avatar: task.pair_avatar } : undefined,
             subtasks: subtasksByTask[task.id] || []
@@ -1031,8 +1085,12 @@ router.post('/tasks', requireAuth, (req, res) => {
             return res.status(400).json({ error: 'Campos obrigatórios: id, title, status, priority' });
         }
         const stmt = db.prepare(`
-            INSERT INTO tasks (id, title, description, status, priority, assigneeId, pairAssigneeId, storyPoints, tags, sprintId, repositoryId, xpPractices) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (
+                id, title, description, status, priority, assigneeId, pairAssigneeId, storyPoints,
+                tags, sprintId, repositoryId, xpPractices, type, acceptanceCriteria, dorChecklist,
+                dodChecklist, dependencies, risk, linkedBranch, linkedPRUrl, linkedMRIid
+            ) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         stmt.run(
@@ -1047,7 +1105,16 @@ router.post('/tasks', requireAuth, (req, res) => {
             JSON.stringify(task.tags || []),
             task.sprintId || null,
             task.repositoryId || null,
-            JSON.stringify(task.xpPractices || {})
+            JSON.stringify(task.xpPractices || {}),
+            task.type || 'feature',
+            task.acceptanceCriteria || null,
+            JSON.stringify(task.dorChecklist || []),
+            JSON.stringify(task.dodChecklist || []),
+            JSON.stringify(task.dependencies || []),
+            task.risk || 'medium',
+            task.linkedBranch || null,
+            task.linkedPRUrl || null,
+            task.linkedMRIid || null
         );
 
         // Persist subtasks if provided

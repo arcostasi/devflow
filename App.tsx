@@ -20,6 +20,7 @@ import {
   Repository,
   ActivityLog,
   Sprint,
+  Environment,
   RepoDetailTab,
   GitIntegrationTab,
   WorkspaceNavigationTarget,
@@ -67,9 +68,11 @@ const AppContent: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [repos, setRepos] = useState<Repository[]>([]);
   const [sprints, setSprints] = useState<Sprint[]>([]);
+  const [environments, setEnvironments] = useState<Environment[]>([]);
   const [activeSprint, setActiveSprint] = useState<Sprint | null>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [dashboardStats, setDashboardStats] = useState<any>(null);
+  const [isWorkspaceDataLoading, setIsWorkspaceDataLoading] = useState(true);
   const activeUsers = useMemo(
     () => users.filter((currentUser: any) => currentUser.status !== 'pending' && currentUser.status !== 'inactive'),
     [users]
@@ -81,14 +84,16 @@ const AppContent: React.FC = () => {
   }, []);
 
   const loadData = async () => {
+    setIsWorkspaceDataLoading(true);
     try {
-      const [fetchedTasks, fetchedRepos, fetchedSprints, fetchedUsers, fetchedActivities, fetchedStats] = await Promise.all([
+      const [fetchedTasks, fetchedRepos, fetchedSprints, fetchedUsers, fetchedActivities, fetchedStats, fetchedEnvironments] = await Promise.all([
         api.getTasks(),
         api.getRepos(),
         api.getSprints(),
         api.getUsers(),
         api.getActivities(),
-        api.getDashboardStats()
+        api.getDashboardStats(),
+        api.getEnvironments(),
       ]);
       setTasks(fetchedTasks);
       setRepos(fetchedRepos);
@@ -96,12 +101,15 @@ const AppContent: React.FC = () => {
       setActivities(fetchedActivities);
       setDashboardStats(fetchedStats);
       setSprints(fetchedSprints);
+      setEnvironments(fetchedEnvironments);
       // Logic to find active sprint (status='active') or default to first
       const active = fetchedSprints.find((s: Sprint) => s.status === 'active') || fetchedSprints[0];
       if (active) setActiveSprint(active);
     } catch (error) {
       console.error("Failed to load data", error);
       addToast("Falha ao Carregar Dados", "error", "Não foi possível conectar ao servidor. Verifique se o serviço está ativo.");
+    } finally {
+      setIsWorkspaceDataLoading(false);
     }
   };
 
@@ -258,6 +266,35 @@ const AppContent: React.FC = () => {
     setCurrentView(ViewState.GIT);
   };
 
+  const handleOpenEnvironment = (
+    environmentId: string,
+    options: {
+      repoId?: string | null;
+      source?: WorkspaceNavigationTarget['source'];
+    } = {}
+  ) => {
+    setNavigationTarget({
+      source: options.source || 'activity',
+      environmentId,
+      repoId: options.repoId || null,
+    });
+    setCurrentView(ViewState.ENVIRONMENTS);
+  };
+
+  const handleActivateSprint = async (sprintId: string) => {
+    const sprint = sprints.find((item) => item.id === sprintId);
+    if (!sprint) return;
+
+    try {
+      await api.updateSprint(sprintId, { status: 'active' });
+      addToast('Sprint ativada', 'success', `"${sprint.name}" agora está em execução.`);
+      await loadData();
+      setCurrentView(ViewState.KANBAN);
+    } catch (error: any) {
+      addToast('Falha ao ativar sprint', 'error', error.message || 'Não foi possível ativar a sprint selecionada.');
+    }
+  };
+
   const renderView = () => {
     switch (currentView) {
       case ViewState.DASHBOARD:
@@ -272,7 +309,9 @@ const AppContent: React.FC = () => {
             onOpenRepo={(id) => handleOpenRepo(id, { source: 'dashboard' })}
             onOpenRepoInGit={(id, tab) => handleOpenRepoGit(id, { tab, source: 'dashboard' })}
             onOpenTask={(task) => handleOpenTask(task, 'dashboard')}
+            onOpenEnvironment={(environmentId, repoId) => handleOpenEnvironment(environmentId, { repoId, source: 'activity' })}
             stats={dashboardStats}
+            isLoading={isWorkspaceDataLoading}
           />
         );
       case ViewState.KANBAN:
@@ -287,6 +326,7 @@ const AppContent: React.FC = () => {
             repositories={repos}
             selectedTaskId={selectedTaskId}
             onSelectedTaskIdHandled={() => setSelectedTaskId(null)}
+            isLoading={isWorkspaceDataLoading}
           />
         );
       case ViewState.BACKLOG:
@@ -321,6 +361,7 @@ const AppContent: React.FC = () => {
             onRepoClick={(id) => handleOpenRepo(id, { source: 'repo_list' })}
             onRepoGitClick={(id) => handleOpenRepoGit(id, { source: 'repo_list' })}
             onRepoIssuesClick={(id) => handleOpenRepo(id, { tab: 'issues', source: 'repo_list' })}
+            isLoading={isWorkspaceDataLoading}
           />
         );
       case ViewState.REPO_DETAIL: {
@@ -334,6 +375,7 @@ const AppContent: React.FC = () => {
               onRepoClick={(id) => handleOpenRepo(id, { source: 'repo_list' })}
               onRepoGitClick={(id) => handleOpenRepoGit(id, { source: 'repo_list' })}
               onRepoIssuesClick={(id) => handleOpenRepo(id, { tab: 'issues', source: 'repo_list' })}
+              isLoading={isWorkspaceDataLoading}
             />
           );
         }
@@ -356,6 +398,8 @@ const AppContent: React.FC = () => {
             repositories={repos}
             addToast={addToast}
             onNavigateToGit={() => setCurrentView(ViewState.GIT)}
+            preferredRepoId={currentView === ViewState.ENVIRONMENTS ? navigationTarget?.repoId ?? null : null}
+            preferredEnvironmentId={currentView === ViewState.ENVIRONMENTS ? navigationTarget?.environmentId ?? null : null}
           />
         );
       case ViewState.SETTINGS:
@@ -372,6 +416,8 @@ const AppContent: React.FC = () => {
             onOpenRepo={(id) => handleOpenRepo(id, { source: 'dashboard' })}
             onOpenRepoInGit={(id, tab) => handleOpenRepoGit(id, { tab, source: 'dashboard' })}
             onOpenTask={(task) => handleOpenTask(task, 'dashboard')}
+            onOpenEnvironment={(environmentId, repoId) => handleOpenEnvironment(environmentId, { repoId, source: 'activity' })}
+            isLoading={isWorkspaceDataLoading}
           />
         );
     }
@@ -413,9 +459,15 @@ const AppContent: React.FC = () => {
         setView={setCurrentView}
         toggleTheme={toggleTheme}
         openNewTaskModal={() => openNewTaskModal('todo')}
+        openNewRepoModal={() => setIsNewRepoModalOpen(true)}
         tasks={tasks}
         repos={repos}
+        sprints={sprints}
+        environments={environments}
         onSelectTask={(task) => handleOpenTask(task, 'command_palette')}
+        onOpenRepo={(repoId) => handleOpenRepo(repoId, { source: 'command_palette' })}
+        onActivateSprint={handleActivateSprint}
+        onOpenEnvironment={(environmentId, repoId) => handleOpenEnvironment(environmentId, { repoId, source: 'command_palette' })}
       />
 
       <NewTaskModal

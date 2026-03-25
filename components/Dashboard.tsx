@@ -8,11 +8,13 @@ interface DashboardProps {
   tasks: Task[];
   repositories: Repository[];
   activities: ActivityLog[];
+  isLoading?: boolean;
   onNavigate: (view: ViewState) => void;
   onCreateTask: () => void;
   onCreateRepo: () => void;
   onOpenRepo: (id: string) => void;
   onOpenRepoInGit: (id: string, tab?: GitIntegrationTab) => void;
+  onOpenEnvironment: (environmentId: string, repoId?: string | null) => void;
   onOpenTask: (task: Task) => void;
   stats?: {
     totalCommits: number;
@@ -39,22 +41,34 @@ const formatDashboardTimestamp = (timestamp: string) => {
   return dashboardDateFormatter.format(parsed);
 };
 
+const parseActivityMeta = (meta?: string) => {
+  if (!meta) return null;
+
+  const trimmedMeta = meta.trim();
+  if (!(trimmedMeta.startsWith('{') && trimmedMeta.endsWith('}'))) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(trimmedMeta) as Record<string, string>;
+  } catch {
+    return null;
+  }
+};
+
 const getActivityMetaLabel = (log: ActivityLog) => {
   if (!log.meta) return null;
 
   const trimmedMeta = log.meta.trim();
   if (!trimmedMeta) return null;
 
-  if (trimmedMeta.startsWith('{') && trimmedMeta.endsWith('}')) {
-    try {
-      const parsed = JSON.parse(trimmedMeta) as Record<string, string>;
-      if (parsed.taskId) return 'Tarefa rastreada';
-      if (parsed.sprintId) return 'Sprint rastreada';
-      if (parsed.repoId) return 'Repositório rastreado';
-      if (parsed.pipelineId) return 'Pipeline rastreado';
-    } catch {
-      return trimmedMeta;
-    }
+  const parsed = parseActivityMeta(trimmedMeta);
+  if (parsed) {
+    if (parsed.taskId) return 'Tarefa rastreada';
+    if (parsed.sprintId) return 'Sprint rastreada';
+    if (parsed.environmentId) return 'Ambiente rastreado';
+    if (parsed.repoId) return 'Repositório rastreado';
+    if (parsed.pipelineId) return 'Pipeline rastreado';
   }
 
   return trimmedMeta;
@@ -145,6 +159,7 @@ const getRepoActionLabel = (targetType: ActivityLog['targetType']) => (
 );
 
 const actionPillClassName = 'inline-flex items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/78 px-2.5 py-1 text-[11px] font-medium text-slate-600 shadow-sm shadow-slate-200/40 transition-all hover:border-primary-500/25 hover:text-primary-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:shadow-none dark:hover:text-primary-300';
+const workspaceSignalIconWrap = 'flex h-12 w-12 min-w-12 items-center justify-center rounded-2xl border bg-white/78 shadow-sm dark:shadow-none';
 
 const ActivityItem: React.FC<{
   log: ActivityLog;
@@ -153,14 +168,16 @@ const ActivityItem: React.FC<{
   onOpenTask: (task: Task) => void;
   onOpenRepo: (id: string) => void;
   onOpenRepoInGit: (id: string, tab?: GitIntegrationTab) => void;
+  onOpenEnvironment: (environmentId: string, repoId?: string | null) => void;
   onNavigate: (view: ViewState) => void;
-}> = ({ log, task, repo, onOpenTask, onOpenRepo, onOpenRepoInGit, onNavigate }) => {
+}> = ({ log, task, repo, onOpenTask, onOpenRepo, onOpenRepoInGit, onOpenEnvironment, onNavigate }) => {
   const getIcon = () => {
     switch (log.targetType) {
       case 'pr': return <GitPullRequest className="w-4 h-4 text-purple-600 dark:text-purple-400" />;
       case 'commit': return <GitCommit className="w-4 h-4 text-blue-600 dark:text-blue-400" />;
       case 'issue': return <AlertCircle className="w-4 h-4 text-orange-600 dark:text-orange-400" />;
       case 'sprint': return <Boxes className="w-4 h-4 text-violet-600 dark:text-violet-300" />;
+      case 'environment': return <Rocket className="w-4 h-4 text-emerald-600 dark:text-emerald-300" />;
       default: return <GitMerge className="w-4 h-4 text-slate-500" />;
     }
   };
@@ -168,6 +185,7 @@ const ActivityItem: React.FC<{
   const userName = log.user?.name || 'Usuário Desconhecido';
   const metaLabel = getActivityMetaLabel(log);
   const timestampLabel = formatDashboardTimestamp(log.timestamp);
+  const parsedMeta = parseActivityMeta(log.meta);
 
   const activityAction = (() => {
     if (log.targetType === 'issue') {
@@ -188,6 +206,20 @@ const ActivityItem: React.FC<{
       return {
         label: 'Abrir sprint',
         handler: () => onNavigate(ViewState.KANBAN),
+      };
+    }
+
+    if (log.targetType === 'environment') {
+      if (parsedMeta?.environmentId) {
+        return {
+          label: 'Abrir ambiente',
+          handler: () => onOpenEnvironment(parsedMeta.environmentId, parsedMeta.repoId || repo?.id || null),
+        };
+      }
+
+      return {
+        label: 'Ver ambientes',
+        handler: () => onNavigate(ViewState.ENVIRONMENTS),
       };
     }
 
@@ -339,7 +371,7 @@ const getRepoStatusDotClass = (isBroken: boolean, status: Repository['status']):
   return 'bg-slate-400';
 };
 
-const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, onNavigate, onCreateTask, onCreateRepo, onOpenRepo, onOpenRepoInGit, onOpenTask, stats }) => {
+const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, isLoading = false, onNavigate, onCreateTask, onCreateRepo, onOpenRepo, onOpenRepoInGit, onOpenEnvironment, onOpenTask, stats }) => {
   const openIssuesCount = useMemo(() => tasks.filter(t => t.status !== 'done').length, [tasks]);
   const reviewsCount = useMemo(() => tasks.filter(t => t.status === 'review').length, [tasks]);
   const readyForReleaseCount = useMemo(() => tasks.filter(t => t.status === 'ready').length, [tasks]);
@@ -382,19 +414,12 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
   const [showFailedPanel, setShowFailedPanel] = useState(false);
 
   const getRelatedRepoFromLog = (log: ActivityLog) => {
+    const parsed = parseActivityMeta(log.meta);
+    if (parsed?.repoId) {
+      return repoById.get(parsed.repoId);
+    }
+
     if (!log.meta) {
-      return repoByName.get(log.target.trim().toLocaleLowerCase('pt-BR'));
-    }
-
-    const trimmedMeta = log.meta.trim();
-    if (!(trimmedMeta.startsWith('{') && trimmedMeta.endsWith('}'))) {
-      return repoByName.get(log.target.trim().toLocaleLowerCase('pt-BR'));
-    }
-
-    try {
-      const parsed = JSON.parse(trimmedMeta) as { repoId?: string };
-      if (parsed.repoId) return repoById.get(parsed.repoId);
-    } catch {
       return repoByName.get(log.target.trim().toLocaleLowerCase('pt-BR'));
     }
 
@@ -531,7 +556,7 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
           <div className="mt-5 space-y-3">
             <div className="rounded-2xl border border-emerald-200/65 bg-emerald-50/55 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.58)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-emerald-100/80 bg-white/75 text-emerald-600 shadow-sm dark:border-emerald-500/20 dark:bg-emerald-500/[0.08] dark:text-emerald-300 dark:shadow-none">
+                <div className={`${workspaceSignalIconWrap} border-emerald-100/80 text-emerald-600 dark:border-emerald-500/20 dark:bg-emerald-500/[0.08] dark:text-emerald-300`}>
                   <ShieldCheck className="h-5 w-5" />
                 </div>
                 <div>
@@ -542,7 +567,7 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
             </div>
             <div className="rounded-2xl border border-blue-200/65 bg-blue-50/55 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.58)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-blue-100/80 bg-white/75 text-blue-600 shadow-sm dark:border-blue-500/20 dark:bg-blue-500/[0.08] dark:text-blue-300 dark:shadow-none">
+                <div className={`${workspaceSignalIconWrap} border-blue-100/80 text-blue-600 dark:border-blue-500/20 dark:bg-blue-500/[0.08] dark:text-blue-300`}>
                   <Boxes className="h-5 w-5" />
                 </div>
                 <div>
@@ -553,7 +578,7 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
             </div>
             <div className="rounded-2xl border border-violet-200/65 bg-violet-50/55 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.58)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-violet-100/80 bg-white/75 text-violet-600 shadow-sm dark:border-purple-500/20 dark:bg-purple-500/[0.08] dark:text-purple-300 dark:shadow-none">
+                <div className={`${workspaceSignalIconWrap} border-violet-100/80 text-violet-600 dark:border-purple-500/20 dark:bg-purple-500/[0.08] dark:text-purple-300`}>
                   <Rocket className="h-5 w-5" />
                 </div>
                 <div>
@@ -612,7 +637,7 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
           <div className="surface-header panel-header-compact flex items-center justify-between bg-slate-50/45 dark:bg-transparent">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-[var(--text-muted)]">Fluxo recente</p>
-              <h3 className="mt-1 font-semibold text-slate-800 dark:text-white">Atividade Recente</h3>
+              <h3 className="mt-1 font-semibold text-slate-800 dark:text-white">Timeline Operacional</h3>
             </div>
             <button
               onClick={() => onNavigate(ViewState.GIT)}
@@ -622,7 +647,20 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
             </button>
           </div>
           <div className="space-y-3 p-4">
-            {activities.slice(0, 5).map(log => (
+            {isLoading ? (
+              Array.from({ length: 4 }).map((_, index) => (
+                <div key={`activity-skeleton-${index}`} className="rounded-2xl border border-slate-200/55 bg-slate-50/55 px-4 py-4 dark:border-white/5 dark:bg-white/[0.015]">
+                  <div className="flex items-start gap-3">
+                    <div className="h-10 w-10 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                    <div className="flex-1 space-y-3">
+                      <div className="h-4 w-4/5 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                      <div className="h-3 w-2/5 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                      <div className="h-3 w-1/4 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : activities.slice(0, 5).map(log => (
               <ActivityItem
                 key={log.id}
                 log={log}
@@ -633,10 +671,11 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
                 onOpenTask={onOpenTask}
                 onOpenRepo={onOpenRepo}
                 onOpenRepoInGit={onOpenRepoInGit}
+                onOpenEnvironment={onOpenEnvironment}
                 onNavigate={onNavigate}
               />
             ))}
-            {activities.length === 0 && (
+            {!isLoading && activities.length === 0 && (
               <div className="surface-empty rounded-2xl bg-slate-50/55 py-12 text-center text-sm text-slate-400 dark:bg-transparent dark:text-[var(--text-muted)]">Nenhuma atividade recente.</div>
             )}
           </div>
@@ -657,7 +696,25 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
             </button>
           </div>
           <div className="p-4 flex-1">
-            {displayedRepos.length === 0 ? (
+            {isLoading ? (
+              <div className="space-y-3">
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <div key={`repo-skeleton-${index}`} className="rounded-2xl border border-slate-200/70 bg-slate-50/58 p-3 dark:border-white/10 dark:bg-white/[0.015]">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 animate-pulse rounded-2xl bg-slate-200/80 dark:bg-white/[0.08]" />
+                      <div className="flex-1 space-y-2">
+                        <div className="h-4 w-2/3 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                        <div className="h-3 w-1/2 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                      </div>
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      <div className="h-8 w-20 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                      <div className="h-8 w-24 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : displayedRepos.length === 0 ? (
               <div className="surface-empty rounded-2xl bg-slate-50/55 py-8 text-center text-xs italic text-slate-400 dark:bg-transparent">
                 Nenhum repositório encontrado.
               </div>

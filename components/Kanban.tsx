@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { api } from '../services/api';
-import { Task, TaskStatus, Subtask, Sprint, User, Repository, Comment } from '../types';
-import { Plus, UserCircle2, X, MoreHorizontal, Filter, Check, Edit2, Trash2, Users, AlertTriangle, FlaskConical, GitBranch, GitPullRequest, Layout, CheckSquare, Link as LinkIcon, MessageSquare, Send, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ActivityLog, ChecklistItem, Task, TaskStatus, Subtask, Sprint, User, Repository, Comment, RiskLevel } from '../types';
+import { Plus, UserCircle2, X, MoreHorizontal, Filter, Check, Edit2, Trash2, Users, AlertTriangle, FlaskConical, GitBranch, GitPullRequest, Layout, CheckSquare, Link as LinkIcon, MessageSquare, Send, ChevronLeft, ChevronRight, ShieldCheck, TimerReset, Sparkles, ArrowUpRight, Link2 } from 'lucide-react';
 import Avatar from './Avatar';
 import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { useConfirm } from '../contexts/ConfirmContext';
@@ -17,6 +17,7 @@ interface KanbanProps {
     repositories: Repository[];
     selectedTaskId?: string | null;
     onSelectedTaskIdHandled?: () => void;
+    isLoading?: boolean;
 }
 
 // Configuração das Colunas (inclui novo status 'ready' = Pronto para Release)
@@ -49,6 +50,30 @@ const getTaskStatusLabel = (status: TaskStatus): string => {
     if (status === 'ready') return 'Pronto para release';
     if (status === 'done') return 'Concluído';
     return 'Backlog';
+};
+
+const getRiskLabel = (risk?: RiskLevel): string => {
+    if (risk === 'high') return 'Alto';
+    if (risk === 'low') return 'Baixo';
+    return 'Médio';
+};
+
+const getRiskTone = (risk?: RiskLevel): string => {
+    if (risk === 'high') return 'border-red-200/80 bg-red-50/75 text-red-700 dark:border-red-500/20 dark:bg-red-500/[0.12] dark:text-red-300';
+    if (risk === 'low') return 'border-emerald-200/80 bg-emerald-50/75 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/[0.12] dark:text-emerald-300';
+    return 'border-amber-200/80 bg-amber-50/75 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/[0.12] dark:text-amber-300';
+};
+
+const formatTimelineTimestamp = (value?: string) => {
+    if (!value) return 'Sem registro';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+};
+
+const getChecklistProgress = (items?: ChecklistItem[]) => {
+    if (!items?.length) return 0;
+    return Math.round((items.filter((item) => item.checked).length / items.length) * 100);
 };
 
 const summarizeRecentComments = (comments: Comment[], limit = 3) => comments
@@ -140,7 +165,7 @@ const TaskCard: React.FC<{
     );
 };
 
-export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParentTasks, addToast, openNewTaskModal, activeSprint, teamMembers, repositories, selectedTaskId, onSelectedTaskIdHandled }) => {
+export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParentTasks, addToast, openNewTaskModal, activeSprint, teamMembers, repositories, selectedTaskId, onSelectedTaskIdHandled, isLoading = false }) => {
     const { confirm } = useConfirm();
     const [localTasks, setLocalTasks] = useState<Task[]>(initialTasks);
     const tasks = setParentTasks ? initialTasks : localTasks;
@@ -155,6 +180,8 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
     const [commentText, setCommentText] = useState('');
     const [loadingComments, setLoadingComments] = useState(false);
     const [postingComment, setPostingComment] = useState(false);
+    const [taskActivities, setTaskActivities] = useState<ActivityLog[]>([]);
+    const [loadingTaskActivities, setLoadingTaskActivities] = useState(false);
     const [gitLinkDrafts, setGitLinkDrafts] = useState({ linkedBranch: '', linkedPRUrl: '', linkedMRIid: '' });
 
     // Reset tab and comments when switching tasks
@@ -180,12 +207,50 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
     }, [selectedTask?.id, activeTab]);
 
     useEffect(() => {
+        if (!selectedTask) {
+            setTaskActivities([]);
+            return;
+        }
+
+        setLoadingTaskActivities(true);
+        api.getActivities()
+            .then((activities) => {
+                const normalizedTitle = selectedTask.title.trim().toLocaleLowerCase('pt-BR');
+                const relatedActivities = (activities as ActivityLog[]).filter((activity) => {
+                    if (activity.taskId === selectedTask.id) return true;
+                    return activity.target?.trim().toLocaleLowerCase('pt-BR') === normalizedTitle;
+                });
+                setTaskActivities(relatedActivities.slice(0, 8));
+            })
+            .catch(() => setTaskActivities([]))
+            .finally(() => setLoadingTaskActivities(false));
+    }, [selectedTask?.id, selectedTask?.title]);
+
+    useEffect(() => {
         setGitLinkDrafts({
             linkedBranch: selectedTask?.linkedBranch || '',
             linkedPRUrl: selectedTask?.linkedPRUrl || '',
             linkedMRIid: selectedTask?.linkedMRIid || '',
         });
     }, [selectedTask?.id, selectedTask?.linkedBranch, selectedTask?.linkedPRUrl, selectedTask?.linkedMRIid]);
+
+    useEffect(() => {
+        const workspaceBody = document.querySelector<HTMLElement>('.app-workspace-body');
+        if (!workspaceBody) return;
+
+        const previousOverflowY = workspaceBody.style.overflowY;
+        const previousOverscrollBehavior = workspaceBody.style.overscrollBehavior;
+
+        if (selectedTask) {
+            workspaceBody.style.overflowY = 'hidden';
+            workspaceBody.style.overscrollBehavior = 'contain';
+        }
+
+        return () => {
+            workspaceBody.style.overflowY = previousOverflowY;
+            workspaceBody.style.overscrollBehavior = previousOverscrollBehavior;
+        };
+    }, [selectedTask]);
 
     useEffect(() => {
         if (!selectedTaskId) return;
@@ -337,6 +402,27 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
         updateTask({ subtasks: [...(selectedTask?.subtasks || []), subtask] });
     };
 
+    const updateTaskChecklist = (field: 'dorChecklist' | 'dodChecklist', nextItems: ChecklistItem[]) => {
+        updateTask({ [field]: nextItems } as Partial<Task>);
+    };
+
+    const addTaskChecklistItem = (field: 'dorChecklist' | 'dodChecklist', text: string) => {
+        if (!text.trim() || !selectedTask) return;
+        const nextItems = [
+            ...(selectedTask[field] || []),
+            { id: `${field}-${Date.now()}`, text: text.trim(), checked: false },
+        ];
+        updateTaskChecklist(field, nextItems);
+    };
+
+    const toggleTaskDependency = (dependencyId: string) => {
+        if (!selectedTask) return;
+        const current = new Set(selectedTask.dependencies || []);
+        if (current.has(dependencyId)) current.delete(dependencyId);
+        else current.add(dependencyId);
+        updateTask({ dependencies: Array.from(current) });
+    };
+
     const saveGitLinkDraft = (field: 'linkedBranch' | 'linkedPRUrl' | 'linkedMRIid') => {
         if (!selectedTask) return;
         const nextValue = gitLinkDrafts[field].trim();
@@ -350,6 +436,19 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
         : undefined;
     const selectedTaskStatusLabel = selectedTask ? getTaskStatusLabel(selectedTask.status) : '';
     const recentCommentsSummary = summarizeRecentComments(comments);
+    const selectedTaskDependencies = useMemo(() => {
+        if (!selectedTask?.dependencies?.length) return [];
+        return selectedTask.dependencies
+            .map((dependencyId) => tasks.find((task) => task.id === dependencyId))
+            .filter(Boolean) as Task[];
+    }, [selectedTask?.dependencies, tasks]);
+    const dependencyOptions = useMemo(() => {
+        if (!selectedTask) return [];
+        return tasks.filter((task) => task.id !== selectedTask.id && task.status !== 'done');
+    }, [selectedTask, tasks]);
+    const dorProgress = getChecklistProgress(selectedTask?.dorChecklist);
+    const dodProgress = getChecklistProgress(selectedTask?.dodChecklist);
+    const subtaskProgress = selectedTask?.subtasks?.length ? Math.round((selectedTask.subtasks.filter((item) => item.done).length / selectedTask.subtasks.length) * 100) : 0;
 
     return (
         <div className="page-shell flex min-h-[calc(100vh-4.25rem)] flex-col">
@@ -476,6 +575,39 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
 
             {/* Board */}
             <div ref={boardScrollRef} className="flex-1 overflow-x-auto scroll-smooth px-6 pb-6 pt-5">
+                {isLoading ? (
+                    <div className="grid h-[42rem] place-items-center rounded-[1.35rem] border border-dashed border-slate-200/80 bg-slate-50/45 text-center dark:border-white/10 dark:bg-white/[0.02] xl:h-[48rem] 2xl:h-[52rem]">
+                        <div className="max-w-md px-6">
+                            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200/80 bg-white/80 shadow-sm shadow-slate-200/50 dark:border-white/10 dark:bg-white/[0.04] dark:shadow-none">
+                                <Layout className="h-6 w-6 animate-pulse text-primary-500" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-slate-800 dark:text-white">Montando o quadro da sprint</h3>
+                            <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-[var(--text-muted)]">
+                                Carregando tarefas, responsáveis e sinais do fluxo para exibir um board consistente.
+                            </p>
+                        </div>
+                    </div>
+                ) : filteredTasks.length === 0 ? (
+                    <div className="grid h-[42rem] place-items-center rounded-[1.35rem] border border-dashed border-slate-200/80 bg-slate-50/45 text-center dark:border-white/10 dark:bg-white/[0.02] xl:h-[48rem] 2xl:h-[52rem]">
+                        <div className="max-w-md px-6">
+                            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200/80 bg-white/80 shadow-sm shadow-slate-200/50 dark:border-white/10 dark:bg-white/[0.04] dark:shadow-none">
+                                <CheckSquare className="h-6 w-6 text-slate-400 dark:text-slate-300" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-slate-800 dark:text-white">Nenhum item visível no board</h3>
+                            <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-[var(--text-muted)]">
+                                Ajuste os filtros atuais ou adicione uma nova tarefa para começar a movimentar o fluxo desta sprint.
+                            </p>
+                            <div className="mt-4 flex justify-center gap-2">
+                                <button onClick={() => setFilterAssignee(null)} className="rounded-xl border border-slate-200/80 bg-white/80 px-3 py-2 text-sm text-slate-600 shadow-sm shadow-slate-200/40 hover:border-primary-500/30 hover:text-primary-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:shadow-none">
+                                    Limpar time
+                                </button>
+                                <button onClick={() => setFilterRepo(null)} className="rounded-xl border border-slate-200/80 bg-white/80 px-3 py-2 text-sm text-slate-600 shadow-sm shadow-slate-200/40 hover:border-primary-500/30 hover:text-primary-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:shadow-none">
+                                    Limpar projeto
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                ) : (
                 <div className="flex h-[42rem] min-w-[1330px] gap-5 xl:h-[48rem] xl:min-w-[1430px] 2xl:h-[52rem] 2xl:min-w-[1510px]">
                     {columns.map(col => {
                         const colTasks = filteredTasks.filter(t => t.status === col.id);
@@ -530,6 +662,7 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                         );
                     })}
                 </div>
+                )}
             </div>
 
             {/* Drawer de Detalhes da Tarefa */}
@@ -541,10 +674,10 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                         className="absolute inset-0 bg-slate-950/55 backdrop-blur-sm"
                         onClick={() => setSelectedTask(null)}
                     />
-                    <div className="app-flyout relative flex h-full w-full flex-col animate-in slide-in-from-right duration-300 border-l border-slate-200 md:w-[620px] dark:border-white/10">
+                    <div className="app-flyout relative flex h-full w-full flex-col overflow-hidden animate-in slide-in-from-right duration-300 border-l border-slate-200 md:w-[680px] dark:border-white/10">
 
                         {/* Drawer Header */}
-                        <div className="panel-header-block flex items-start justify-between gap-4 border-b border-slate-200/70 bg-slate-50/72 dark:border-white/10 dark:bg-white/[0.03]">
+                        <div className="panel-header-block sticky top-0 z-20 flex items-start justify-between gap-4 border-b border-slate-200/70 backdrop-blur dark:border-white/10" style={{ background: 'var(--bg-panel-primary)' }}>
                             <div className="mr-4 flex-1">
                                 <div className="mb-3 flex items-center gap-2 text-xs">
                                     <span className="rounded-full border border-slate-200/80 bg-white/78 px-2 py-1 font-mono text-slate-500 shadow-sm shadow-slate-200/40 dark:border-white/10 dark:bg-white/[0.04] dark:text-[var(--text-muted)] dark:shadow-none">{selectedTask.id}</span>
@@ -563,7 +696,7 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                         </div>
 
                         {/* Tabs */}
-                        <div className="panel-header-compact border-b border-slate-200/60 bg-slate-50/38 dark:border-white/10 dark:bg-transparent">
+                        <div className="panel-header-compact sticky top-[108px] z-10 border-b border-slate-200/60 backdrop-blur dark:border-white/10" style={{ background: 'var(--bg-panel-primary)' }}>
                             <div className="flex flex-wrap gap-2">
                             {[
                                 { id: 'details', label: 'Detalhes', icon: Layout },
@@ -574,7 +707,7 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id as any)}
-                                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium transition-colors ${activeTab === tab.id ? 'border-primary-500 bg-primary-600 text-white' : 'border-slate-200/80 bg-slate-50/78 text-slate-500 shadow-sm shadow-slate-200/40 hover:text-slate-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-[var(--text-muted)] dark:shadow-none dark:hover:text-[var(--text-primary)]'}`}
+                                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 ${activeTab === tab.id ? 'border-primary-500 bg-primary-600 text-white shadow-lg shadow-primary-900/15' : 'border-slate-200/80 bg-slate-50/78 text-slate-500 shadow-sm shadow-slate-200/40 hover:border-slate-300 hover:text-slate-700 dark:border-white/10 dark:bg-white/[0.025] dark:text-slate-400 dark:shadow-none dark:hover:border-white/20 dark:hover:bg-white/[0.045] dark:hover:text-white'}`}
                                 >
                                     <tab.icon className="w-4 h-4" /> {tab.label}
                                 </button>
@@ -583,64 +716,124 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                         </div>
 
                         {/* Drawer Content */}
-                                <div className="panel-body-compact flex-1 overflow-y-auto">
+                                <div className="panel-body-compact min-h-0 flex-1 overflow-y-auto overscroll-contain" style={{ background: 'var(--bg-panel-primary)' }}>
 
                             {activeTab === 'details' && (
                                 <div className="panel-stack">
-                                    {/* Propriedades Rápidas */}
-                                    <div className="surface-muted panel-body-compact grid grid-cols-2 gap-4 rounded-2xl">
-                                        <div>
-                                            <label htmlFor="task-status" className="text-xs text-slate-500 uppercase font-semibold mb-1 block">Status</label>
-                                            <select
-                                                id="task-status"
-                                                value={selectedTask.status}
-                                                onChange={(e) => updateTask({ status: e.target.value as TaskStatus })}
-                                                className="app-input w-full rounded-xl px-3 py-2 text-sm"
-                                            >
-                                                {columns.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                                            </select>
+                                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                                        <div className="surface-muted rounded-2xl p-4">
+                                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-[var(--text-muted)]">Status</p>
+                                            <p className="mt-2 text-sm font-semibold text-slate-800 dark:text-white">{selectedTaskStatusLabel}</p>
+                                            <p className="mt-1 text-xs text-slate-500 dark:text-[var(--text-muted)]">Fluxo atual da entrega.</p>
                                         </div>
-                                        <div>
-                                            <label htmlFor="task-assignee" className="text-xs text-slate-500 uppercase font-semibold mb-1 block">Responsavel</label>
-                                            <div className="flex items-center gap-2">
-                                                {selectedTask.assignee && <Avatar name={selectedTask.assignee.name} size="sm" />}
-                                                <select
-                                                    id="task-assignee"
-                                                    value={selectedTask.assignee?.id || ''}
-                                                    onChange={(e) => updateTask({ assignee: teamMembers.find(m => m.id === e.target.value) })}
-                                                    className="app-input flex-1 rounded-xl px-3 py-2 text-sm"
-                                                >
-                                                    <option value="">Ninguém</option>
-                                                    {(teamMembers || []).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                                                </select>
+                                        <div className="surface-muted rounded-2xl p-4">
+                                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-[var(--text-muted)]">Risco</p>
+                                            <div className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getRiskTone(selectedTask.risk)}`}>
+                                                {getRiskLabel(selectedTask.risk)}
+                                            </div>
+                                            <p className="mt-2 text-xs text-slate-500 dark:text-[var(--text-muted)]">Pressão operacional da entrega.</p>
+                                        </div>
+                                        <div className="surface-muted rounded-2xl p-4">
+                                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-[var(--text-muted)]">Checklist</p>
+                                            <p className="mt-2 text-sm font-semibold text-slate-800 dark:text-white">{subtaskProgress}%</p>
+                                            <p className="mt-1 text-xs text-slate-500 dark:text-[var(--text-muted)]">{selectedTask.subtasks?.length || 0} itens rastreados.</p>
+                                        </div>
+                                        <div className="surface-muted rounded-2xl p-4">
+                                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-[var(--text-muted)]">Dependências</p>
+                                            <p className="mt-2 text-sm font-semibold text-slate-800 dark:text-white">{selectedTaskDependencies.length}</p>
+                                            <p className="mt-1 text-xs text-slate-500 dark:text-[var(--text-muted)]">Itens que podem bloquear o fluxo.</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="surface-muted panel-body-compact rounded-2xl">
+                                        <div className="mb-4 flex items-center justify-between gap-3">
+                                            <div>
+                                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-[var(--text-muted)]">Resumo operacional</p>
+                                                <h4 className="mt-1 text-sm font-semibold text-slate-800 dark:text-white">Contexto, qualidade e rastreabilidade</h4>
+                                            </div>
+                                            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/75 px-3 py-1.5 text-xs text-slate-600 shadow-sm shadow-slate-200/35 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:shadow-none">
+                                                <Sparkles className="h-3.5 w-3.5 text-primary-500" />
+                                                Detalhe rico
                                             </div>
                                         </div>
-                                        <div>
-                                            <label htmlFor="task-priority" className="text-xs text-slate-500 uppercase font-semibold mb-1 block">Prioridade</label>
-                                            <select
-                                                id="task-priority"
-                                                value={selectedTask.priority}
-                                                onChange={(e) => updateTask({ priority: e.target.value as any })}
-                                                className="app-input w-full rounded-xl px-3 py-2 text-sm"
-                                            >
-                                                <option value="low">Baixa</option>
-                                                <option value="medium">Média</option>
-                                                <option value="high">Alta</option>
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label htmlFor="task-story-points" className="text-xs text-slate-500 uppercase font-semibold mb-1 block">Story Points</label>
-                                            <div className="flex gap-1">
-                                                {[1, 2, 3, 5, 8, 13].map(pt => (
-                                                    <button
-                                                        key={pt}
-                                                        onClick={() => updateTask({ storyPoints: pt })}
-                                                        id={pt === 1 ? 'task-story-points' : undefined}
-                                                        className={`h-9 w-9 rounded-xl border text-xs font-bold transition-all ${selectedTask.storyPoints === pt ? 'border-primary-500 bg-primary-600 text-white' : 'border-slate-200/80 bg-slate-50/78 text-slate-600 shadow-sm shadow-slate-200/35 dark:border-white/10 dark:bg-white/[0.04] dark:text-[var(--text-secondary)] dark:shadow-none'}`}
+
+                                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                                            <div>
+                                                <label htmlFor="task-status" className="mb-1 block text-xs font-semibold uppercase text-slate-500">Status</label>
+                                                <select
+                                                    id="task-status"
+                                                    value={selectedTask.status}
+                                                    onChange={(e) => updateTask({ status: e.target.value as TaskStatus })}
+                                                    className="app-input w-full rounded-xl px-3 py-2 text-sm"
+                                                >
+                                                    {columns.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label htmlFor="task-assignee" className="mb-1 block text-xs font-semibold uppercase text-slate-500">Responsável</label>
+                                                <div className="flex items-center gap-2">
+                                                    {selectedTask.assignee && <Avatar name={selectedTask.assignee.name} size="sm" />}
+                                                    <select
+                                                        id="task-assignee"
+                                                        value={selectedTask.assignee?.id || ''}
+                                                        onChange={(e) => updateTask({ assignee: teamMembers.find(m => m.id === e.target.value) })}
+                                                        className="app-input flex-1 rounded-xl px-3 py-2 text-sm"
                                                     >
-                                                        {pt}
-                                                    </button>
-                                                ))}
+                                                        <option value="">Ninguém</option>
+                                                        {(teamMembers || []).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label htmlFor="task-priority" className="mb-1 block text-xs font-semibold uppercase text-slate-500">Prioridade</label>
+                                                <select
+                                                    id="task-priority"
+                                                    value={selectedTask.priority}
+                                                    onChange={(e) => updateTask({ priority: e.target.value as any })}
+                                                    className="app-input w-full rounded-xl px-3 py-2 text-sm"
+                                                >
+                                                    <option value="low">Baixa</option>
+                                                    <option value="medium">Média</option>
+                                                    <option value="high">Alta</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Risco</label>
+                                                <div className="flex gap-2">
+                                                    {(['low', 'medium', 'high'] as RiskLevel[]).map((risk) => (
+                                                        <button
+                                                            key={risk}
+                                                            type="button"
+                                                            onClick={() => updateTask({ risk })}
+                                                            className={`rounded-xl border px-3 py-2 text-sm font-medium transition-all ${selectedTask.risk === risk ? getRiskTone(risk) : 'border-slate-200/80 bg-slate-50/78 text-slate-500 hover:border-slate-300 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300'}`}
+                                                        >
+                                                            {getRiskLabel(risk)}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label htmlFor="task-story-points" className="mb-1 block text-xs font-semibold uppercase text-slate-500">Story Points</label>
+                                                <div className="flex gap-1">
+                                                    {[1, 2, 3, 5, 8, 13].map(pt => (
+                                                        <button
+                                                            key={pt}
+                                                            type="button"
+                                                            onClick={() => updateTask({ storyPoints: pt })}
+                                                            id={pt === 1 ? 'task-story-points' : undefined}
+                                                            className={`h-9 w-9 rounded-xl border text-xs font-bold transition-all ${selectedTask.storyPoints === pt ? 'border-primary-500 bg-primary-600 text-white' : 'border-slate-200/80 bg-slate-50/78 text-slate-600 shadow-sm shadow-slate-200/35 dark:border-white/10 dark:bg-white/[0.04] dark:text-[var(--text-secondary)] dark:shadow-none'}`}
+                                                        >
+                                                            {pt}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Repositório</label>
+                                                <div className="flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-slate-50/78 px-3 py-2.5 text-sm text-slate-600 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300">
+                                                    <GitBranch className="h-4 w-4 text-slate-400" />
+                                                    <span className="truncate">{selectedTaskRepository?.name || 'Sem repositório vinculado'}</span>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -652,8 +845,8 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                                         <textarea
                                             value={selectedTask.description}
                                             onChange={(e) => updateTask({ description: e.target.value })}
-                                            className="app-input h-40 w-full resize-none rounded-2xl p-4 text-sm leading-relaxed focus:ring-2 focus:ring-primary-500/30 focus:outline-none"
-                                            placeholder="Adicione detalhes, critérios de aceitação..."
+                                            className="app-input h-36 w-full resize-none rounded-2xl p-4 text-sm leading-relaxed focus:ring-2 focus:ring-primary-500/30 focus:outline-none"
+                                            placeholder="Adicione detalhes, impacto, contexto técnico e objetivo."
                                         />
                                         <AIFieldAssist
                                             fieldType="task_description"
@@ -687,6 +880,194 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                                             buttonLabel="Refinar descrição"
                                             className="mt-2"
                                         />
+                                    </div>
+
+                                    <div>
+                                        <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+                                            <ShieldCheck className="h-4 w-4" /> Critério de aceite
+                                        </label>
+                                        <textarea
+                                            value={selectedTask.acceptanceCriteria || ''}
+                                            onChange={(e) => updateTask({ acceptanceCriteria: e.target.value })}
+                                            className="app-input h-28 w-full resize-none rounded-2xl p-4 text-sm leading-relaxed focus:ring-2 focus:ring-primary-500/30 focus:outline-none"
+                                            placeholder="Liste condições que precisam estar verdadeiras para a tarefa ser considerada entregue."
+                                        />
+                                    </div>
+
+                                    <div className="grid gap-4 xl:grid-cols-2">
+                                        <div className="surface-muted rounded-2xl p-4">
+                                            <div className="mb-3 flex items-center justify-between gap-3">
+                                                <div>
+                                                    <p className="text-sm font-semibold text-slate-800 dark:text-white">Definition of Ready</p>
+                                                    <p className="text-xs text-slate-500 dark:text-[var(--text-muted)]">{dorProgress}% concluído</p>
+                                                </div>
+                                                <span className="rounded-full border border-slate-200/80 bg-white/75 px-2.5 py-1 text-[11px] font-medium text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300">{selectedTask.dorChecklist?.length || 0} itens</span>
+                                            </div>
+                                            <div className="panel-stack-tight">
+                                                {(selectedTask.dorChecklist || []).map((item) => (
+                                                    <div key={item.id} className="group flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-white/70 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => updateTaskChecklist('dorChecklist', (selectedTask.dorChecklist || []).map((entry) => entry.id === item.id ? { ...entry, checked: !entry.checked } : entry))}
+                                                            className={`flex h-5 w-5 items-center justify-center rounded border ${item.checked ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 dark:border-slate-600'}`}
+                                                        >
+                                                            {item.checked && <Check className="h-3.5 w-3.5" />}
+                                                        </button>
+                                                        <input
+                                                            type="text"
+                                                            value={item.text}
+                                                            onChange={(e) => updateTaskChecklist('dorChecklist', (selectedTask.dorChecklist || []).map((entry) => entry.id === item.id ? { ...entry, text: e.target.value } : entry))}
+                                                            className={`flex-1 bg-transparent text-sm focus:outline-none ${item.checked ? 'line-through text-slate-400' : 'text-slate-700 dark:text-slate-200'}`}
+                                                        />
+                                                        <button type="button" onClick={() => updateTaskChecklist('dorChecklist', (selectedTask.dorChecklist || []).filter((entry) => entry.id !== item.id))} className="opacity-0 transition-opacity group-hover:opacity-100 text-slate-300 hover:text-red-500">
+                                                            <Trash2 className="h-4 w-4" />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                                <input
+                                                    type="text"
+                                                    placeholder="Adicionar item de pronto para iniciar..."
+                                                    className="app-input w-full rounded-xl px-3 py-2 text-sm"
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') {
+                                                            addTaskChecklistItem('dorChecklist', e.currentTarget.value);
+                                                            e.currentTarget.value = '';
+                                                        }
+                                                    }}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="surface-muted rounded-2xl p-4">
+                                            <div className="mb-3 flex items-center justify-between gap-3">
+                                                <div>
+                                                    <p className="text-sm font-semibold text-slate-800 dark:text-white">Definition of Done</p>
+                                                    <p className="text-xs text-slate-500 dark:text-[var(--text-muted)]">{dodProgress}% concluído</p>
+                                                </div>
+                                                <span className="rounded-full border border-slate-200/80 bg-white/75 px-2.5 py-1 text-[11px] font-medium text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300">{selectedTask.dodChecklist?.length || 0} itens</span>
+                                            </div>
+                                            <div className="panel-stack-tight">
+                                                {(selectedTask.dodChecklist || []).map((item) => (
+                                                    <div key={item.id} className="group flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-white/70 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => updateTaskChecklist('dodChecklist', (selectedTask.dodChecklist || []).map((entry) => entry.id === item.id ? { ...entry, checked: !entry.checked } : entry))}
+                                                            className={`flex h-5 w-5 items-center justify-center rounded border ${item.checked ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 dark:border-slate-600'}`}
+                                                        >
+                                                            {item.checked && <Check className="h-3.5 w-3.5" />}
+                                                        </button>
+                                                        <input
+                                                            type="text"
+                                                            value={item.text}
+                                                            onChange={(e) => updateTaskChecklist('dodChecklist', (selectedTask.dodChecklist || []).map((entry) => entry.id === item.id ? { ...entry, text: e.target.value } : entry))}
+                                                            className={`flex-1 bg-transparent text-sm focus:outline-none ${item.checked ? 'line-through text-slate-400' : 'text-slate-700 dark:text-slate-200'}`}
+                                                        />
+                                                        <button type="button" onClick={() => updateTaskChecklist('dodChecklist', (selectedTask.dodChecklist || []).filter((entry) => entry.id !== item.id))} className="opacity-0 transition-opacity group-hover:opacity-100 text-slate-300 hover:text-red-500">
+                                                            <Trash2 className="h-4 w-4" />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                                <input
+                                                    type="text"
+                                                    placeholder="Adicionar item de pronto para concluir..."
+                                                    className="app-input w-full rounded-xl px-3 py-2 text-sm"
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') {
+                                                            addTaskChecklistItem('dodChecklist', e.currentTarget.value);
+                                                            e.currentTarget.value = '';
+                                                        }
+                                                    }}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="surface-muted rounded-2xl p-4">
+                                        <div className="mb-3 flex items-center justify-between gap-3">
+                                            <div>
+                                                <p className="text-sm font-semibold text-slate-800 dark:text-white">Dependências e bloqueios</p>
+                                                <p className="text-xs text-slate-500 dark:text-[var(--text-muted)]">Vincule itens que precisam avançar antes desta entrega.</p>
+                                            </div>
+                                            <span className="rounded-full border border-slate-200/80 bg-white/75 px-2.5 py-1 text-[11px] font-medium text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300">{selectedTaskDependencies.length} vinculadas</span>
+                                        </div>
+                                        <div className="mb-3 flex flex-wrap gap-2">
+                                            {selectedTaskDependencies.length > 0 ? selectedTaskDependencies.map((dependency) => (
+                                                <button
+                                                    key={dependency.id}
+                                                    type="button"
+                                                    onClick={() => setSelectedTask(dependency)}
+                                                    className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/75 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-primary-500/30 hover:text-primary-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:hover:text-primary-300"
+                                                >
+                                                    <Link2 className="h-3.5 w-3.5" />
+                                                    {dependency.title}
+                                                </button>
+                                            )) : (
+                                                <div className="rounded-2xl border border-dashed border-slate-200/80 px-3 py-2 text-sm text-slate-400 dark:border-white/10 dark:text-slate-500">
+                                                    Nenhuma dependência registrada.
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="max-h-44 overflow-y-auto rounded-2xl border border-slate-200/80 bg-white/70 p-2 dark:border-white/10 dark:bg-white/[0.03]">
+                                            <div className="space-y-2">
+                                                {dependencyOptions.map((task) => {
+                                                    const selected = (selectedTask.dependencies || []).includes(task.id);
+                                                    return (
+                                                        <button
+                                                            key={task.id}
+                                                            type="button"
+                                                            onClick={() => toggleTaskDependency(task.id)}
+                                                            className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition-all ${selected ? 'border border-primary-500/40 bg-primary-500/10 text-primary-700 dark:text-primary-300' : 'border border-transparent hover:bg-slate-100/70 dark:hover:bg-white/[0.04]'}`}
+                                                        >
+                                                            <span className="min-w-0 truncate">{task.title}</span>
+                                                            <span className="ml-3 text-[11px] uppercase tracking-[0.14em] text-slate-400">{getTaskStatusLabel(task.status)}</span>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="surface-muted rounded-2xl p-4">
+                                        <div className="mb-4 flex items-center justify-between gap-3">
+                                            <div>
+                                                <p className="text-sm font-semibold text-slate-800 dark:text-white">Timeline relacionada</p>
+                                                <p className="text-xs text-slate-500 dark:text-[var(--text-muted)]">Mudanças, comentários e vínculos técnicos mais recentes desta tarefa.</p>
+                                            </div>
+                                            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/75 px-3 py-1.5 text-xs text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300">
+                                                <TimerReset className="h-3.5 w-3.5" />
+                                                {taskActivities.length} eventos
+                                            </div>
+                                        </div>
+                                        {loadingTaskActivities ? (
+                                            <div className="rounded-2xl border border-dashed border-slate-200/80 px-4 py-6 text-sm text-slate-400 dark:border-white/10 dark:text-slate-500">
+                                                Carregando histórico relacionado...
+                                            </div>
+                                        ) : taskActivities.length === 0 ? (
+                                            <div className="rounded-2xl border border-dashed border-slate-200/80 px-4 py-6 text-sm text-slate-400 dark:border-white/10 dark:text-slate-500">
+                                                Ainda não há histórico consolidado para esta tarefa.
+                                            </div>
+                                        ) : (
+                                            <div className="panel-stack-tight">
+                                                {taskActivities.map((activity) => (
+                                                    <div key={activity.id} className="flex gap-3 rounded-2xl border border-slate-200/80 bg-white/70 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                                                        <Avatar name={activity.user?.name || '?'} size="sm" className="flex-shrink-0" />
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="flex items-center justify-between gap-3">
+                                                                <span className="truncate text-sm font-medium text-slate-800 dark:text-white">{activity.user?.name || 'Sistema'}</span>
+                                                                <span className="text-[11px] uppercase tracking-[0.14em] text-slate-400">{formatTimelineTimestamp(activity.timestamp)}</span>
+                                                            </div>
+                                                            <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-300">
+                                                                <span className="font-medium">{activity.action}</span>{' '}
+                                                                <span className="text-primary-600 dark:text-primary-300">{activity.target}</span>
+                                                            </p>
+                                                            {activity.meta && (
+                                                                <p className="mt-1 text-xs text-slate-500 dark:text-[var(--text-muted)]">{activity.meta}</p>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
 
                                     <div className="pt-4 border-t border-slate-100 dark:border-slate-800">

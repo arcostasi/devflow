@@ -1,7 +1,16 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, LayoutDashboard, Kanban, GitBranch, Database, Settings, Sun, Plus, ArrowRight, FolderGit2, CheckCircle2, ListTodo } from 'lucide-react';
-import { ViewState, Task, Repository } from '../types';
+import { Search, LayoutDashboard, Kanban, GitBranch, Database, Settings, Sun, Plus, ArrowRight, FolderGit2, CheckCircle2, ListTodo, Rocket, Boxes } from 'lucide-react';
+import { ViewState, Task, Repository, Sprint, Environment } from '../types';
+
+interface PaletteItem {
+  id: string;
+  label: string;
+  icon: React.ElementType;
+  action: () => void;
+  group: string;
+  meta?: string;
+}
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -9,9 +18,15 @@ interface CommandPaletteProps {
   setView: (view: ViewState) => void;
   toggleTheme: () => void;
   openNewTaskModal: () => void;
+  openNewRepoModal: () => void;
   tasks: Task[];
   repos: Repository[];
+  sprints: Sprint[];
+  environments: Environment[];
   onSelectTask: (task: Task) => void;
+  onOpenRepo: (repoId: string) => void;
+  onActivateSprint: (sprintId: string) => void;
+  onOpenEnvironment: (environmentId: string, repoId?: string | null) => void;
 }
 
 const CommandPalette: React.FC<CommandPaletteProps> = ({
@@ -20,26 +35,111 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   setView,
   toggleTheme,
   openNewTaskModal,
+  openNewRepoModal,
   tasks,
   repos,
-  onSelectTask
+  sprints,
+  environments,
+  onSelectTask,
+  onOpenRepo,
+  onActivateSprint,
+  onOpenEnvironment
 }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const repoById = useMemo(() => new Map(repos.map((repo) => [repo.id, repo])), [repos]);
 
-  const staticCommands = useMemo(() => [
+  const staticCommands = useMemo<PaletteItem[]>(() => [
     { id: 'nav-dash', label: 'Ir para Visão Geral', icon: LayoutDashboard, action: () => setView(ViewState.DASHBOARD), group: 'Navegação' },
     { id: 'nav-kanban', label: 'Ir para Sprint Atual (Scrumban)', icon: Kanban, action: () => setView(ViewState.KANBAN), group: 'Navegação' },
     { id: 'nav-backlog', label: 'Ir para Backlog do Projeto', icon: ListTodo, action: () => setView(ViewState.BACKLOG), group: 'Navegação' },
     { id: 'nav-repos', label: 'Ir para Repositórios', icon: Database, action: () => setView(ViewState.REPOS), group: 'Navegação' },
     { id: 'nav-git', label: 'Ir para Controle de Fonte', icon: GitBranch, action: () => setView(ViewState.GIT), group: 'Navegação' },
+    { id: 'nav-env', label: 'Ir para Ambientes', icon: Rocket, action: () => setView(ViewState.ENVIRONMENTS), group: 'Navegação' },
     { id: 'nav-settings', label: 'Ir para Configurações', icon: Settings, action: () => setView(ViewState.SETTINGS), group: 'Navegação' },
     { id: 'act-new-task', label: 'Criar Nova Tarefa', icon: Plus, action: () => { setView(ViewState.KANBAN); openNewTaskModal(); }, group: 'Ações' },
+    { id: 'act-new-repo', label: 'Criar Novo Repositório', icon: FolderGit2, action: () => { setView(ViewState.REPOS); openNewRepoModal(); }, group: 'Ações' },
+    { id: 'act-open-backlog', label: 'Planejar no Backlog', icon: Boxes, action: () => setView(ViewState.BACKLOG), group: 'Ações' },
     { id: 'act-theme', label: 'Alternar Tema Claro/Escuro', icon: Sun, action: () => toggleTheme(), group: 'Ações' },
-  ], [setView, openNewTaskModal, toggleTheme]);
+  ], [setView, openNewTaskModal, openNewRepoModal, toggleTheme]);
 
-  const filteredItems = useMemo(() => {
-    if (!query) return staticCommands;
+  const suggestedTasks = useMemo<PaletteItem[]>(() =>
+    tasks
+      .filter((task) => task.status !== 'done')
+      .slice(0, 4)
+      .map((task) => ({
+        id: `suggested-task-${task.id}`,
+        label: task.title,
+        icon: CheckCircle2,
+        action: () => { onSelectTask(task); setIsOpen(false); },
+        group: 'Tarefas',
+        meta: `${task.id} · ${task.status}`,
+      })),
+  [tasks, onSelectTask, setIsOpen]);
+
+  const suggestedRepos = useMemo<PaletteItem[]>(() =>
+    repos
+      .filter((repo) => repo.status !== 'archived')
+      .slice(0, 3)
+      .map((repo) => ({
+        id: `suggested-repo-${repo.id}`,
+        label: repo.name,
+        icon: FolderGit2,
+        action: () => { onOpenRepo(repo.id); setIsOpen(false); },
+        group: 'Repositórios',
+        meta: repo.branch,
+      })),
+  [repos, onOpenRepo, setIsOpen]);
+
+  const suggestedSprints = useMemo<PaletteItem[]>(() => {
+    const sprintStatusOrder = { active: 0, future: 1, completed: 2 };
+    return [...sprints]
+      .sort((left, right) => sprintStatusOrder[left.status] - sprintStatusOrder[right.status])
+      .slice(0, 3)
+      .map((sprint) => ({
+        id: `suggested-sprint-${sprint.id}`,
+        label: sprint.status === 'active' ? `Abrir sprint ${sprint.name}` : `Ativar sprint ${sprint.name}`,
+        icon: Boxes,
+        action: () => {
+          if (sprint.status === 'active') {
+            setView(ViewState.KANBAN);
+          } else {
+            onActivateSprint(sprint.id);
+          }
+          setIsOpen(false);
+        },
+        group: 'Sprints',
+        meta: `${sprint.status} · ${sprint.startDate} → ${sprint.endDate}`,
+      }));
+  }, [sprints, onActivateSprint, setView, setIsOpen]);
+
+  const suggestedEnvironments = useMemo<PaletteItem[]>(() =>
+    environments
+      .slice()
+      .sort((left, right) => {
+        if (left.status === right.status) return left.name.localeCompare(right.name);
+        if (left.status === 'down') return -1;
+        if (right.status === 'down') return 1;
+        if (left.status === 'degraded') return -1;
+        if (right.status === 'degraded') return 1;
+        return 0;
+      })
+      .slice(0, 4)
+      .map((environment) => {
+        const repo = repoById.get(environment.repoId);
+        return {
+          id: `suggested-env-${environment.id}`,
+          label: environment.name,
+          icon: Rocket,
+          action: () => { onOpenEnvironment(environment.id, environment.repoId); setIsOpen(false); },
+          group: 'Ambientes',
+          meta: `${repo?.name || environment.repoId} · ${environment.type}${environment.currentVersion ? ` · ${environment.currentVersion}` : ''}`,
+        };
+      }),
+  [environments, onOpenEnvironment, repoById, setIsOpen]);
+
+  const filteredItems = useMemo<PaletteItem[]>(() => {
+    if (!query) return [...staticCommands, ...suggestedTasks, ...suggestedRepos, ...suggestedSprints, ...suggestedEnvironments];
 
     const lowerQuery = query.toLowerCase();
 
@@ -49,7 +149,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     );
 
     // Tasks
-    const matchedTasks = tasks.filter(t =>
+    const matchedTasks: PaletteItem[] = tasks.filter(t =>
       t.title.toLowerCase().includes(lowerQuery) || t.id.toLowerCase().includes(lowerQuery)
     ).slice(0, 5).map(t => ({
       id: `task-${t.id}`,
@@ -61,18 +161,53 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     }));
 
     // Repos
-    const matchedRepos = repos.filter(r =>
+    const matchedRepos: PaletteItem[] = repos.filter(r =>
       r.name.toLowerCase().includes(lowerQuery)
     ).slice(0, 3).map(r => ({
       id: `repo-${r.id}`,
       label: r.name,
       icon: FolderGit2,
-      action: () => { setView(ViewState.REPOS); setIsOpen(false); },
-      group: 'Repositórios'
+      action: () => { onOpenRepo(r.id); setIsOpen(false); },
+      group: 'Repositórios',
+      meta: r.branch
     }));
 
-    return [...matchedCommands, ...matchedTasks, ...matchedRepos];
-  }, [query, staticCommands, tasks, repos, onSelectTask, setView, setIsOpen]);
+    const matchedSprints: PaletteItem[] = sprints.filter((sprint) =>
+      sprint.name.toLowerCase().includes(lowerQuery) || sprint.goal.toLowerCase().includes(lowerQuery)
+    ).slice(0, 3).map((sprint) => ({
+      id: `sprint-${sprint.id}`,
+      label: sprint.status === 'active' ? `Abrir sprint ${sprint.name}` : `Ativar sprint ${sprint.name}`,
+      icon: Boxes,
+      action: () => {
+        if (sprint.status === 'active') {
+          setView(ViewState.KANBAN);
+        } else {
+          onActivateSprint(sprint.id);
+        }
+        setIsOpen(false);
+      },
+      group: 'Sprints',
+      meta: `${sprint.status} · ${sprint.startDate} → ${sprint.endDate}`,
+    }));
+
+    const matchedEnvironments: PaletteItem[] = environments.filter((environment) => {
+      const repo = repoById.get(environment.repoId);
+      const haystack = [environment.name, environment.type, environment.status, repo?.name || environment.repoId].join(' ').toLowerCase();
+      return haystack.includes(lowerQuery);
+    }).slice(0, 4).map((environment) => {
+      const repo = repoById.get(environment.repoId);
+      return {
+        id: `environment-${environment.id}`,
+        label: environment.name,
+        icon: Rocket,
+        action: () => { onOpenEnvironment(environment.id, environment.repoId); setIsOpen(false); },
+        group: 'Ambientes',
+        meta: `${repo?.name || environment.repoId} · ${environment.type}${environment.currentVersion ? ` · ${environment.currentVersion}` : ''}`,
+      };
+    });
+
+    return [...matchedCommands, ...matchedTasks, ...matchedRepos, ...matchedSprints, ...matchedEnvironments];
+  }, [query, staticCommands, suggestedTasks, suggestedRepos, suggestedSprints, suggestedEnvironments, tasks, repos, sprints, environments, onSelectTask, onOpenRepo, onActivateSprint, onOpenEnvironment, setView, setIsOpen, repoById]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -93,6 +228,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     const handleNav = (e: KeyboardEvent) => {
+      if (filteredItems.length === 0) return;
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         setSelectedIndex(prev => (prev + 1) % filteredItems.length);
@@ -159,8 +295,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
                     <item.icon className={`w-4 h-4 ${index === selectedIndex ? 'text-primary-500' : 'text-slate-400 dark:text-[var(--text-muted)]'}`} />
                     <div className="flex flex-col truncate">
                       <span className={index === selectedIndex ? 'font-medium text-primary-700 dark:text-primary-200' : ''}>{item.label}</span>
-                      {'meta' in item && (
-                        <span className="text-[10px] font-mono text-slate-400 dark:text-[var(--text-muted)]">{(item as any).meta}</span>
+                      {item.meta && (
+                        <span className="text-[10px] font-mono text-slate-400 dark:text-[var(--text-muted)]">{item.meta}</span>
                       )}
                     </div>
                   </div>

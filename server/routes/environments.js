@@ -9,6 +9,13 @@ import fs from 'fs';
 const router = express.Router();
 const execFileAsync = util.promisify(execFile);
 
+const createActivityLog = ({ userId, action, target, targetType, meta = null }) => {
+    db.prepare(`
+        INSERT INTO activities (id, userId, action, target, targetType, taskId, timestamp, meta)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(`a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, userId, action, target, targetType, null, new Date().toISOString(), meta);
+};
+
 // Helper to execute git commands safely
 const runGitCommand = async (repoId, args) => {
     const repo = db.prepare('SELECT localPath FROM repositories WHERE id = ?').get(repoId);
@@ -86,6 +93,19 @@ router.post('/', requireAuth, async (req, res) => {
         `).run(id, name, type, repoId, description || null, internalNotes || null);
 
         const newEnv = db.prepare('SELECT * FROM environments WHERE id = ?').get(id);
+        const repo = db.prepare('SELECT id, name FROM repositories WHERE id = ?').get(repoId);
+        createActivityLog({
+            userId: req.user.id,
+            action: 'criou ambiente',
+            target: name,
+            targetType: 'environment',
+            meta: JSON.stringify({
+                repoId,
+                repoName: repo?.name || repoId,
+                environmentId: id,
+                type,
+            }),
+        });
         res.status(201).json(newEnv);
     } catch (err) {
         console.error('Failed to create environment:', err);
@@ -98,6 +118,11 @@ router.put('/:id', requireAuth, (req, res) => {
     const { name, type, description, internalNotes } = req.body;
 
     try {
+        const existingEnvironment = db.prepare('SELECT * FROM environments WHERE id = ?').get(req.params.id);
+        if (!existingEnvironment) {
+            return res.status(404).json({ error: 'Environment not found' });
+        }
+
         const result = db.prepare(`
             UPDATE environments 
             SET name = COALESCE(?, name),
@@ -107,11 +132,22 @@ router.put('/:id', requireAuth, (req, res) => {
             WHERE id = ?
         `).run(name, type, description, internalNotes, req.params.id);
 
-        if (result.changes === 0) {
-            return res.status(404).json({ error: 'Environment not found' });
-        }
-
         const updated = db.prepare('SELECT * FROM environments WHERE id = ?').get(req.params.id);
+        if ((name && name !== existingEnvironment.name) || (type && type !== existingEnvironment.type) || (description && description !== existingEnvironment.description) || (internalNotes && internalNotes !== existingEnvironment.internalNotes)) {
+            const repo = db.prepare('SELECT id, name FROM repositories WHERE id = ?').get(updated.repoId);
+            createActivityLog({
+                userId: req.user.id,
+                action: 'atualizou ambiente',
+                target: updated.name,
+                targetType: 'environment',
+                meta: JSON.stringify({
+                    repoId: updated.repoId,
+                    repoName: repo?.name || updated.repoId,
+                    environmentId: updated.id,
+                    type: updated.type,
+                }),
+            });
+        }
         res.json(updated);
     } catch (err) {
         console.error('Failed to update environment:', err);
@@ -132,6 +168,7 @@ router.post('/:id/deploy', requireAuth, async (req, res) => {
         if (!environment) {
             return res.status(404).json({ error: 'Environment not found' });
         }
+        const repo = db.prepare('SELECT id, name FROM repositories WHERE id = ?').get(environment.repoId);
 
         const tagName = `env-${environment.type}-v${version}`;
 
@@ -188,6 +225,20 @@ router.post('/:id/deploy', requireAuth, async (req, res) => {
         `).run(version, buildId || null, now, req.user.id, req.params.id);
 
         const deployment = db.prepare('SELECT * FROM deployments WHERE id = ?').get(deploymentId);
+        createActivityLog({
+            userId: req.user.id,
+            action: 'publicou atualização',
+            target: environment.name,
+            targetType: 'environment',
+            meta: JSON.stringify({
+                repoId: environment.repoId,
+                repoName: repo?.name || environment.repoId,
+                environmentId: environment.id,
+                version,
+                pipelineId: pipelineId || null,
+                type: environment.type,
+            }),
+        });
 
         res.status(201).json({
             success: true,
@@ -219,6 +270,7 @@ router.post('/:id/promote', requireAuth, async (req, res) => {
         if (!targetEnv || !sourceEnv) {
             return res.status(404).json({ error: 'Environment not found' });
         }
+        const repo = db.prepare('SELECT id, name FROM repositories WHERE id = ?').get(targetEnv.repoId);
 
         if (!sourceEnv.currentVersion) {
             return res.status(400).json({ error: 'Source environment has no deployed version' });
@@ -273,6 +325,20 @@ router.post('/:id/promote', requireAuth, async (req, res) => {
             SET currentVersion = ?, currentBuildId = ?, lastDeployedAt = ?, lastDeployedBy = ?, status = 'healthy'
             WHERE id = ?
         `).run(sourceEnv.currentVersion, sourceEnv.currentBuildId, now, req.user.id, req.params.id);
+        createActivityLog({
+            userId: req.user.id,
+            action: `promoveu ${sourceEnv.type} para ${targetEnv.type}`,
+            target: targetEnv.name,
+            targetType: 'environment',
+            meta: JSON.stringify({
+                repoId: targetEnv.repoId,
+                repoName: repo?.name || targetEnv.repoId,
+                environmentId: targetEnv.id,
+                sourceEnvironmentId: sourceEnv.id,
+                version: sourceEnv.currentVersion,
+                type: targetEnv.type,
+            }),
+        });
 
         res.status(201).json({
             success: true,
@@ -295,6 +361,7 @@ router.post('/:id/rollback', requireAuth, async (req, res) => {
         if (!environment) {
             return res.status(404).json({ error: 'Environment not found' });
         }
+        const repo = db.prepare('SELECT id, name FROM repositories WHERE id = ?').get(environment.repoId);
 
         let targetDeployment;
 
@@ -357,6 +424,20 @@ router.post('/:id/rollback', requireAuth, async (req, res) => {
             SET currentVersion = ?, currentBuildId = ?, lastDeployedAt = ?, lastDeployedBy = ?, status = 'healthy'
             WHERE id = ?
         `).run(targetDeployment.version, targetDeployment.buildId, now, req.user.id, req.params.id);
+        createActivityLog({
+            userId: req.user.id,
+            action: 'executou rollback',
+            target: environment.name,
+            targetType: 'environment',
+            meta: JSON.stringify({
+                repoId: environment.repoId,
+                repoName: repo?.name || environment.repoId,
+                environmentId: environment.id,
+                fromVersion: environment.currentVersion,
+                toVersion: targetDeployment.version,
+                type: environment.type,
+            }),
+        });
 
         res.json({
             success: true,
