@@ -1,10 +1,16 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Repository, RepoDetailTab, Task } from '../types';
+import { Repository, RepoDetailTab, Task, getErrorMessage } from '../types';
 import { ArrowLeft, GitBranch, Clock, AlertCircle, Copy, FileText, Code2, GitPullRequest, Star, Eye, Folder, X, Save, Edit3, GitCommit, Settings, AlertTriangle, Trash2 } from 'lucide-react';
 import Avatar from './Avatar';
 import { api } from '../services/api';
 import { useConfirm } from '../contexts/ConfirmContext';
+import {
+    getRepoStatusLabel,
+    getRepoStatusToneClass,
+    getTaskPriorityToneClass,
+    getTaskStatusLabel,
+} from '../utils/statusPriority';
 
 interface RepoFile {
     name: string;
@@ -33,39 +39,6 @@ interface RepoDetailProps {
     initialTab?: RepoDetailTab;
     onOpenGit?: (repoId: string) => void;
 }
-
-const getRepoStatusLabel = (status: Repository['status']) => {
-    if (status === 'active') return 'Operando';
-    if (status === 'error') return 'Falha';
-    return 'Arquivado';
-};
-
-const getRepoStatusClassName = (status: Repository['status']) => {
-    if (status === 'active') {
-        return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/[0.1] dark:text-emerald-300';
-    }
-
-    if (status === 'error') {
-        return 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/20 dark:bg-red-500/[0.1] dark:text-red-300';
-    }
-
-    return 'border-slate-200 bg-slate-50 text-slate-700 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300';
-};
-
-const getTaskPriorityClassName = (priority: Task['priority']) => {
-    if (priority === 'high') return 'text-red-600 dark:text-red-300';
-    if (priority === 'medium') return 'text-amber-600 dark:text-amber-300';
-    return 'text-blue-600 dark:text-blue-300';
-};
-
-const getTaskStatusLabel = (status: Task['status']) => {
-    if (status === 'todo') return 'A Fazer';
-    if (status === 'doing') return 'Em Progresso';
-    if (status === 'review') return 'Revisao';
-    if (status === 'ready') return 'Pronto';
-    if (status === 'done') return 'Concluido';
-    return 'Backlog';
-};
 
 const detailInsetCard =
     'rounded-2xl border border-slate-200/75 bg-slate-50/78 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.82)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none';
@@ -105,7 +78,7 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
 
     // Estado para dropdown do botão Code
     const [showCodeDropdown, setShowCodeDropdown] = useState(false);
-    const [gitlabProjectPath, setGitlabProjectPath] = useState<string>((repo as any).gitlabProjectPath || '');
+    const [gitlabProjectPath, setGitlabProjectPath] = useState<string>(repo.gitlabProjectPath || '');
     const [savingSettings, setSavingSettings] = useState(false);
 
     useEffect(() => {
@@ -134,7 +107,7 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
             setFiles(data.files);
             setLocalPath(data.localPath || '');
             return data.files;
-        } catch (error: any) {
+        } catch (error: unknown) {
             const msg: string = error?.message || '';
             if (msg.includes('não encontrado') || msg.includes('not found') || msg.includes('ENOENT')) {
                 setPathMissing(true);
@@ -232,9 +205,9 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
             setFileContent(data.content);
             setEditedContent(data.content);
             setIsEditing(false);
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('Erro ao abrir arquivo:', error);
-            addToast('Falha ao Abrir Arquivo', 'error', error.message || 'Não foi possível ler o conteúdo do arquivo.');
+            addToast('Falha ao Abrir Arquivo', 'error', getErrorMessage(error) || 'Não foi possível ler o conteúdo do arquivo.');
             setSelectedFile(null);
         } finally {
             setLoadingFile(false);
@@ -266,9 +239,9 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                 addToast('Arquivo Salvo', 'info', result.message || 'O conteúdo foi atualizado localmente.');
             }
             setCommitMessage('');
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('Erro ao salvar arquivo:', error);
-            addToast('Falha ao Salvar', 'error', error.message || 'Não foi possível salvar as alterações no arquivo.');
+            addToast('Falha ao Salvar', 'error', getErrorMessage(error) || 'Não foi possível salvar as alterações no arquivo.');
         } finally {
             setSavingFile(false);
         }
@@ -381,7 +354,7 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                     <div className="max-w-2xl">
                         <div className="flex flex-wrap items-center gap-2">
                             <p className="app-section-label">Operacao Tecnica</p>
-                            <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${getRepoStatusClassName(repo.status)}`}>
+                            <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${getRepoStatusToneClass(repo.status)}`}>
                                 {getRepoStatusLabel(repo.status)}
                             </span>
                         </div>
@@ -705,7 +678,7 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                                                     <span>•</span>
                                                     <span>{task.assignee?.name || 'Sem responsavel'}</span>
                                                     <span>•</span>
-                                                    <span className={`font-semibold uppercase ${getTaskPriorityClassName(task.priority)}`}>{task.priority}</span>
+                                                    <span className={`font-semibold uppercase ${getTaskPriorityToneClass(task.priority, 'repo-text')}`}>{task.priority}</span>
                                                     <span>•</span>
                                                     <span>{getTaskStatusLabel(task.status)}</span>
                                                 </div>

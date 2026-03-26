@@ -1,10 +1,16 @@
 import React, { useMemo, useState } from 'react';
-import { Task, TaskStatus, Sprint } from '../types';
+import { Task, TaskStatus, Sprint, getErrorMessage } from '../types';
 import { Plus, ArrowRight, UserCircle2, Calendar, Trash2, Target, Layers3, ShieldAlert, Rocket } from 'lucide-react';
 import Avatar from './Avatar';
 import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { api } from '../services/api';
 import { useConfirm } from '../contexts/ConfirmContext';
+import {
+  getTaskPriorityLabel,
+  getTaskPriorityToneClass,
+  getTaskStatusLabel,
+  getTaskStatusToneClass,
+} from '../utils/statusPriority';
 
 interface BacklogProps {
   tasks: Task[];
@@ -14,61 +20,8 @@ interface BacklogProps {
   openManageSprintsModal: () => void;
   activeSprint: Sprint | null;
   onRefreshData?: () => void;
+  isLoading?: boolean;
 }
-
-const getPriorityLabel = (priority: Task['priority']) => {
-  switch (priority) {
-    case 'high':
-      return 'Alta';
-    case 'medium':
-      return 'Media';
-    default:
-      return 'Baixa';
-  }
-};
-
-const getPriorityClassName = (priority: Task['priority']) => {
-  switch (priority) {
-    case 'high':
-      return 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/20 dark:bg-red-500/[0.1] dark:text-red-300';
-    case 'medium':
-      return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/[0.1] dark:text-amber-300';
-    default:
-      return 'border-slate-200 bg-slate-50 text-slate-700 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300';
-  }
-};
-
-const getStatusLabel = (status: TaskStatus) => {
-  switch (status) {
-    case 'todo':
-      return 'A Fazer';
-    case 'doing':
-      return 'Em Progresso';
-    case 'review':
-      return 'Revisao';
-    case 'ready':
-      return 'Pronto';
-    case 'done':
-      return 'Concluido';
-    default:
-      return 'Backlog';
-  }
-};
-
-const getStatusClassName = (status: TaskStatus) => {
-  switch (status) {
-    case 'doing':
-      return 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/[0.1] dark:text-blue-300';
-    case 'review':
-      return 'border-purple-200 bg-purple-50 text-purple-700 dark:border-purple-500/20 dark:bg-purple-500/[0.1] dark:text-purple-300';
-    case 'ready':
-      return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/[0.1] dark:text-emerald-300';
-    case 'done':
-      return 'border-slate-300 bg-slate-100 text-slate-700 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-300';
-    default:
-      return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/[0.1] dark:text-amber-300';
-  }
-};
 
 const planningInsetCard = 'rounded-2xl border border-slate-200/70 bg-slate-50/72 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none';
 
@@ -80,6 +33,7 @@ const Backlog: React.FC<BacklogProps> = ({
   openManageSprintsModal,
   activeSprint,
   onRefreshData,
+  isLoading = false,
 }) => {
   const { confirm } = useConfirm();
   const [backlogParent] = useAutoAnimate();
@@ -150,8 +104,8 @@ const Backlog: React.FC<BacklogProps> = ({
       const response = await api.syncGitlab();
       addToast('GitLab Sincronizado', 'success', `${response.count ?? 0} itens importados do GitLab.`);
       if (onRefreshData) onRefreshData();
-    } catch (error: any) {
-      addToast('Falha na Sincronizacao', 'error', error.message || 'Nao foi possivel conectar com o GitLab.');
+    } catch (error: unknown) {
+      addToast('Falha na Sincronizacao', 'error', getErrorMessage(error) || 'Nao foi possivel conectar com o GitLab.');
     } finally {
       setIsSyncing(false);
     }
@@ -291,6 +245,24 @@ const Backlog: React.FC<BacklogProps> = ({
           </div>
 
           <div ref={backlogParent} className="flex-1 space-y-3 overflow-y-auto p-4">
+            {isLoading ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <div key={`bl-skel-${i}`} className="surface-card rounded-[1.35rem] border p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 space-y-3">
+                      <div className="flex gap-2">
+                        <div className="h-6 w-16 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                        <div className="h-6 w-20 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                      </div>
+                      <div className="h-5 w-3/4 animate-pulse rounded-lg bg-slate-200/80 dark:bg-white/[0.08]" />
+                      <div className="h-4 w-full animate-pulse rounded-lg bg-slate-200/80 dark:bg-white/[0.08]" />
+                      <div className="h-4 w-2/3 animate-pulse rounded-lg bg-slate-200/80 dark:bg-white/[0.08]" />
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+            <>
             {backlogTasks.map((task) => (
               <article
                 key={task.id}
@@ -299,8 +271,8 @@ const Backlog: React.FC<BacklogProps> = ({
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${getPriorityClassName(task.priority)}`}>
-                        {getPriorityLabel(task.priority)}
+                      <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${getTaskPriorityToneClass(task.priority, 'backlog-badge')}`}>
+                        {getTaskPriorityLabel(task.priority)}
                       </span>
                       <span className="rounded-full border border-slate-200/80 bg-white/72 px-2.5 py-1 text-[11px] font-mono text-slate-500 shadow-sm shadow-slate-200/40 dark:border-white/10 dark:bg-white/[0.04] dark:text-[var(--text-muted)] dark:shadow-none">
                         {task.id}
@@ -362,6 +334,8 @@ const Backlog: React.FC<BacklogProps> = ({
                 </p>
               </div>
             )}
+            </>
+            )}
           </div>
         </div>
 
@@ -382,16 +356,33 @@ const Backlog: React.FC<BacklogProps> = ({
           </div>
 
           <div ref={sprintParent} className="flex-1 space-y-3 overflow-y-auto p-4">
+            {isLoading ? (
+              Array.from({ length: 2 }).map((_, i) => (
+                <div key={`sp-skel-${i}`} className="surface-card rounded-[1.35rem] border p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 space-y-3">
+                      <div className="flex gap-2">
+                        <div className="h-6 w-20 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                        <div className="h-6 w-16 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                      </div>
+                      <div className="h-5 w-3/4 animate-pulse rounded-lg bg-slate-200/80 dark:bg-white/[0.08]" />
+                      <div className="h-4 w-full animate-pulse rounded-lg bg-slate-200/80 dark:bg-white/[0.08]" />
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+            <>
             {sprintTasks.map((task) => (
               <article key={task.id} className="surface-card grid h-[18rem] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[1.35rem] border p-4 transition-all hover:-translate-y-0.5 hover:border-primary-500/20 hover:shadow-[0_24px_40px_-32px_rgba(14,165,233,0.16)] dark:hover:border-primary-500/25 dark:hover:shadow-xl">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${getStatusClassName(task.status)}`}>
-                        {getStatusLabel(task.status)}
+                      <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${getTaskStatusToneClass(task.status)}`}>
+                        {getTaskStatusLabel(task.status)}
                       </span>
-                      <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${getPriorityClassName(task.priority)}`}>
-                        {getPriorityLabel(task.priority)}
+                      <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${getTaskPriorityToneClass(task.priority, 'backlog-badge')}`}>
+                        {getTaskPriorityLabel(task.priority)}
                       </span>
                       <span className="rounded-full border border-slate-200/80 bg-white/72 px-2.5 py-1 text-[11px] font-mono text-slate-500 shadow-sm shadow-slate-200/40 dark:border-white/10 dark:bg-white/[0.04] dark:text-[var(--text-muted)] dark:shadow-none">
                         {task.id}
@@ -445,6 +436,8 @@ const Backlog: React.FC<BacklogProps> = ({
                   Assim que houver uma sprint ativa, os itens planejados aparecerao aqui com foco em capacidade e acompanhamento de entrega.
                 </p>
               </div>
+            )}
+            </>
             )}
           </div>
         </div>

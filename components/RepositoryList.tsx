@@ -18,6 +18,7 @@ import {
   Rocket,
 } from 'lucide-react';
 import { useConfirm } from '../contexts/ConfirmContext';
+import { getRepoStatusLabel, getRepoStatusToneClass } from '../utils/statusPriority';
 
 interface RepoListProps {
   repos: Repository[];
@@ -28,24 +29,6 @@ interface RepoListProps {
   onRepoGitClick?: (id: string) => void;
   onRepoIssuesClick?: (id: string) => void;
 }
-
-const getStatusLabel = (repo: Repository) => {
-  if (repo.status === 'active') return 'Ativo';
-  if (repo.status === 'error') return 'Falha build';
-  return 'Arquivado';
-};
-
-const getStatusClassName = (repo: Repository) => {
-  if (repo.status === 'active') {
-    return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/[0.1] dark:text-emerald-300';
-  }
-
-  if (repo.status === 'error') {
-    return 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/20 dark:bg-red-500/[0.1] dark:text-red-300';
-  }
-
-  return 'border-slate-200 bg-slate-50 text-slate-700 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300';
-};
 
 const getRepoIconClassName = (repo: Repository) => {
   if (repo.status === 'error') {
@@ -59,7 +42,7 @@ const getRepoIconClassName = (repo: Repository) => {
   return 'bg-blue-50 text-blue-600 dark:bg-blue-500/[0.12] dark:text-blue-300';
 };
 
-const getPipelineStatus = (repo: Repository) => (repo as any).lastPipelineStatus as 'success' | 'failed' | 'running' | undefined;
+const getPipelineStatus = (repo: Repository) => repo.lastPipelineStatus;
 const operationalIconWrap = 'flex h-12 w-12 min-w-12 items-center justify-center rounded-2xl';
 
 const repositoryDateFormatter = new Intl.DateTimeFormat('pt-BR', {
@@ -120,7 +103,7 @@ const RepositoryList: React.FC<RepoListProps> = ({ repos, isLoading = false, onD
   const activeRepos = useMemo(() => repos.filter((repo) => repo.status === 'active').length, [repos]);
   const archivedRepos = useMemo(() => repos.filter((repo) => repo.status === 'archived').length, [repos]);
   const errorRepos = useMemo(() => repos.filter((repo) => repo.status === 'error').length, [repos]);
-  const missingPathRepos = useMemo(() => repos.filter((repo) => Boolean((repo as any).pathMissing)).length, [repos]);
+  const missingPathRepos = useMemo(() => repos.filter((repo) => Boolean(repo.pathMissing)).length, [repos]);
 
   return (
     <div className="page-container-narrow page-shell page-stack min-h-full">
@@ -320,10 +303,10 @@ const RepositoryList: React.FC<RepoListProps> = ({ repos, isLoading = false, onD
                             <h3 className="text-lg font-semibold text-slate-900 transition-colors group-hover:text-primary-600 dark:text-[var(--text-primary)] dark:group-hover:text-primary-300">
                               {repo.name}
                             </h3>
-                            <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${getStatusClassName(repo)}`}>
-                              {getStatusLabel(repo)}
+                            <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${getRepoStatusToneClass(repo.status)}`}>
+                              {getRepoStatusLabel(repo.status, 'list')}
                             </span>
-                            {(repo as any).pathMissing && (
+                            {repo.pathMissing && (
                               <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/[0.1] dark:text-amber-300">
                                 <AlertTriangle className="h-3.5 w-3.5" /> Diretorio ausente
                               </span>

@@ -1,11 +1,13 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { api } from '../services/api';
-import { ActivityLog, ChecklistItem, Task, TaskStatus, Subtask, Sprint, User, Repository, Comment, RiskLevel } from '../types';
-import { Plus, UserCircle2, X, MoreHorizontal, Filter, Check, Edit2, Trash2, Users, AlertTriangle, FlaskConical, GitBranch, GitPullRequest, Layout, CheckSquare, Link as LinkIcon, MessageSquare, Send, ChevronLeft, ChevronRight, ShieldCheck, TimerReset, Sparkles, ArrowUpRight, Link2 } from 'lucide-react';
+import { ActivityLog, ChecklistItem, Task, TaskStatus, Subtask, Sprint, User, Repository, Comment, RiskLevel, getErrorMessage } from '../types';
+import { Plus, UserCircle2, X, MoreHorizontal, Filter, Check, Edit2, Trash2, Users, AlertTriangle, FlaskConical, GitBranch, GitPullRequest, Layout, CheckSquare, Link as LinkIcon, MessageSquare, Send, ChevronLeft, ChevronRight, ShieldCheck, TimerReset, Sparkles, Link2 } from 'lucide-react';
 import Avatar from './Avatar';
 import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { useConfirm } from '../contexts/ConfirmContext';
 import AIFieldAssist from './AIFieldAssist';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
+import { getTaskPriorityLabel, getTaskPriorityToneClass, getTaskStatusLabel } from '../utils/statusPriority';
 
 interface KanbanProps {
     initialTasks: Task[];
@@ -31,25 +33,10 @@ const columns: { id: TaskStatus; label: string; color: string; border: string; b
 
 const getPriorityStyles = (p: string) => {
     switch (p) {
-        case 'high': return { badge: 'bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-800', border: 'border-l-4 border-l-red-500' };
-        case 'medium': return { badge: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800', border: 'border-l-4 border-l-amber-500' };
-        default: return { badge: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700', border: 'border-l-4 border-l-slate-400' };
+        case 'high': return { badge: getTaskPriorityToneClass('high', 'kanban-badge'), border: 'border-l-4 border-l-red-500' };
+        case 'medium': return { badge: getTaskPriorityToneClass('medium', 'kanban-badge'), border: 'border-l-4 border-l-amber-500' };
+        default: return { badge: getTaskPriorityToneClass('low', 'kanban-badge'), border: 'border-l-4 border-l-slate-400' };
     }
-};
-
-const getPriorityLabel = (priority: Task['priority']): string => {
-    if (priority === 'low') return 'Baixa';
-    if (priority === 'medium') return 'Media';
-    return 'Alta';
-};
-
-const getTaskStatusLabel = (status: TaskStatus): string => {
-    if (status === 'todo') return 'A Fazer';
-    if (status === 'doing') return 'Em andamento';
-    if (status === 'review') return 'Em revisão';
-    if (status === 'ready') return 'Pronto para release';
-    if (status === 'done') return 'Concluído';
-    return 'Backlog';
 };
 
 const getRiskLabel = (risk?: RiskLevel): string => {
@@ -96,11 +83,21 @@ const TaskCard: React.FC<{
     task: Task;
     onClick: (task: Task) => void;
     onDragStart: (e: React.DragEvent<HTMLButtonElement>, task: Task) => void;
-}> = ({ task, onClick, onDragStart }) => {
+    onMoveRequest: (task: Task, rect: DOMRect) => void;
+}> = React.memo(({ task, onClick, onDragStart, onMoveRequest }) => {
     const styles = getPriorityStyles(task.priority);
     const doneSubtasks = task.subtasks?.filter(s => s.done).length || 0;
     const totalSubtasks = task.subtasks?.length || 0;
     const progress = totalSubtasks > 0 ? Math.round((doneSubtasks / totalSubtasks) * 100) : 0;
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+        if (e.key === 'm' || e.key === 'M') {
+            e.preventDefault();
+            e.stopPropagation();
+            const rect = e.currentTarget.getBoundingClientRect();
+            onMoveRequest(task, rect);
+        }
+    };
 
     return (
         <button
@@ -108,12 +105,14 @@ const TaskCard: React.FC<{
             draggable
             onDragStart={(e) => onDragStart(e, task)}
             onClick={() => onClick(task)}
+            onKeyDown={handleKeyDown}
+            aria-label={`${task.title} — ${getTaskStatusLabel(task.status, 'kanban')}. Pressione M para mover.`}
             className={`surface-card group relative w-full cursor-grab rounded-2xl border px-3.5 py-3 text-left transition-all hover:-translate-y-0.5 hover:border-primary-500/20 hover:shadow-[0_24px_40px_-32px_rgba(14,165,233,0.18)] active:cursor-grabbing dark:hover:border-primary-500/25 dark:hover:shadow-xl ${styles.border}`}
         >
             <div className="mb-2.5 flex items-start justify-between gap-3">
                 <div className="flex flex-wrap gap-1.5">
                     <span className="rounded-full border border-slate-200/80 bg-white/72 px-2 py-0.5 text-[10px] font-mono text-slate-500 shadow-sm shadow-slate-200/40 dark:border-white/10 dark:bg-white/[0.04] dark:text-[var(--text-muted)] dark:shadow-none">{task.id}</span>
-                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${styles.badge}`}>{getPriorityLabel(task.priority)}</span>
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${styles.badge}`}>{getTaskPriorityLabel(task.priority)}</span>
                     {task.tags.slice(0, 2).map(tag => (
                         <span key={tag} className="rounded-full border border-slate-200/80 bg-slate-50/72 px-2 py-0.5 text-[10px] text-slate-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-[var(--text-muted)]">{tag}</span>
                     ))}
@@ -163,7 +162,7 @@ const TaskCard: React.FC<{
             </div>
         </button>
     );
-};
+});
 
 export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParentTasks, addToast, openNewTaskModal, activeSprint, teamMembers, repositories, selectedTaskId, onSelectedTaskIdHandled, isLoading = false }) => {
     const { confirm } = useConfirm();
@@ -184,6 +183,12 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
     const [loadingTaskActivities, setLoadingTaskActivities] = useState(false);
     const [gitLinkDrafts, setGitLinkDrafts] = useState({ linkedBranch: '', linkedPRUrl: '', linkedMRIid: '' });
 
+    // Move-to menu state (keyboard accessible column move)
+    const [moveMenu, setMoveMenu] = useState<{ task: Task; rect: DOMRect } | null>(null);
+    const [moveMenuIndex, setMoveMenuIndex] = useState(0);
+    const [liveAnnouncement, setLiveAnnouncement] = useState('');
+    const moveMenuRef = useRef<HTMLDivElement>(null);
+
     // Reset tab and comments when switching tasks
     const prevTaskIdRef = useRef<string | null>(null);
     useEffect(() => {
@@ -199,11 +204,13 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
 
     useEffect(() => {
         if (!selectedTask || activeTab !== 'comments') return;
+        const controller = new AbortController();
         setLoadingComments(true);
         api.getTaskComments(selectedTask.id)
-            .then(setComments)
+            .then(data => { if (!controller.signal.aborted) setComments(data); })
             .catch(() => {})
-            .finally(() => setLoadingComments(false));
+            .finally(() => { if (!controller.signal.aborted) setLoadingComments(false); });
+        return () => controller.abort();
     }, [selectedTask?.id, activeTab]);
 
     useEffect(() => {
@@ -212,9 +219,11 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
             return;
         }
 
+        const controller = new AbortController();
         setLoadingTaskActivities(true);
         api.getActivities()
             .then((activities) => {
+                if (controller.signal.aborted) return;
                 const normalizedTitle = selectedTask.title.trim().toLocaleLowerCase('pt-BR');
                 const relatedActivities = (activities as ActivityLog[]).filter((activity) => {
                     if (activity.taskId === selectedTask.id) return true;
@@ -222,8 +231,9 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                 });
                 setTaskActivities(relatedActivities.slice(0, 8));
             })
-            .catch(() => setTaskActivities([]))
-            .finally(() => setLoadingTaskActivities(false));
+            .catch(() => { if (!controller.signal.aborted) setTaskActivities([]); })
+            .finally(() => { if (!controller.signal.aborted) setLoadingTaskActivities(false); });
+        return () => controller.abort();
     }, [selectedTask?.id, selectedTask?.title]);
 
     useEffect(() => {
@@ -270,8 +280,8 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
             const newComment = await api.createTaskComment(selectedTask.id, commentText.trim());
             setComments(prev => [...prev, newComment]);
             setCommentText('');
-        } catch (e: any) {
-            addToast('Falha ao Comentar', 'error', e.message || 'Não foi possível publicar o comentário.');
+        } catch (e: unknown) {
+            addToast('Falha ao Comentar', 'error', getErrorMessage(e) || 'Não foi possível publicar o comentário.');
         } finally {
             setPostingComment(false);
         }
@@ -282,8 +292,8 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
         try {
             await api.deleteTaskComment(selectedTask.id, commentId);
             setComments(prev => prev.filter(c => c.id !== commentId));
-        } catch (e: any) {
-            addToast('Falha ao Excluir', 'error', e.message || 'Não foi possível remover o comentário.');
+        } catch (e: unknown) {
+            addToast('Falha ao Excluir', 'error', getErrorMessage(e) || 'Não foi possível remover o comentário.');
         }
     };
 
@@ -300,11 +310,11 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
     const [doneRef] = useAutoAnimate();
     const colRefs = { todo: todoRef, doing: doingRef, review: reviewRef, ready: readyRef, done: doneRef };
 
-    const handleDragStart = (e: React.DragEvent<HTMLButtonElement>, task: Task) => {
+    const handleDragStart = React.useCallback((e: React.DragEvent<HTMLButtonElement>, task: Task) => {
         setDraggedTaskId(task.id);
         e.dataTransfer.setData('taskId', task.id);
         e.dataTransfer.effectAllowed = 'move';
-    };
+    }, []);
 
     const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
         e.preventDefault(); // Necessário para permitir o drop
@@ -323,6 +333,61 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
         }
         setDraggedTaskId(null);
     };
+
+    // Keyboard move-to menu handlers
+    const handleMoveRequest = useCallback((task: Task, rect: DOMRect) => {
+        const otherColumns = columns.filter(c => c.id !== task.status);
+        if (otherColumns.length === 0) return;
+        setMoveMenu({ task, rect });
+        setMoveMenuIndex(0);
+    }, []);
+
+    const handleMoveSelect = useCallback((task: Task, newStatus: TaskStatus) => {
+        setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: newStatus } : t));
+        api.updateTask(task.id, { status: newStatus }).catch(() =>
+            addToast('Falha ao Mover Tarefa', 'error', 'Não foi possível salvar a alteração de status.')
+        );
+        const label = columns.find(c => c.id === newStatus)?.label || newStatus;
+        setLiveAnnouncement(`Tarefa "${task.title}" movida para ${label}`);
+        setMoveMenu(null);
+    }, [setTasks, addToast]);
+
+    const handleMoveMenuKeyDown = useCallback((e: React.KeyboardEvent) => {
+        if (!moveMenu) return;
+        const otherColumns = columns.filter(c => c.id !== moveMenu.task.status);
+        if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+            e.preventDefault();
+            setMoveMenuIndex(i => (i + 1) % otherColumns.length);
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+            e.preventDefault();
+            setMoveMenuIndex(i => (i - 1 + otherColumns.length) % otherColumns.length);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            handleMoveSelect(moveMenu.task, otherColumns[moveMenuIndex].id);
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            setMoveMenu(null);
+        }
+    }, [moveMenu, moveMenuIndex, handleMoveSelect]);
+
+    // Focus the move menu when it opens
+    useEffect(() => {
+        if (moveMenu && moveMenuRef.current) {
+            moveMenuRef.current.focus();
+        }
+    }, [moveMenu]);
+
+    // Close move menu on outside click
+    useEffect(() => {
+        if (!moveMenu) return;
+        const handleClick = (e: MouseEvent) => {
+            if (moveMenuRef.current && !moveMenuRef.current.contains(e.target as Node)) {
+                setMoveMenu(null);
+            }
+        };
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, [moveMenu]);
 
     const updateBoardScrollState = () => {
         const board = boardScrollRef.current;
@@ -380,6 +445,7 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
 
     // Debounce ref for text field updates
     const updateDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const { setDirty } = useUnsavedChanges('kanban');
 
     const updateTask = (updates: Partial<Task>) => {
         if (!selectedTask) return;
@@ -389,10 +455,14 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
 
         // Debounce API call to avoid flooding on text input
         if (updateDebounceRef.current) clearTimeout(updateDebounceRef.current);
+        setDirty(true);
         updateDebounceRef.current = setTimeout(() => {
-            api.updateTask(selectedTask.id, updates).catch(() =>
-                addToast('Falha ao Salvar', 'error', 'Não foi possível salvar as alterações da tarefa.')
-            );
+            api.updateTask(selectedTask.id, updates)
+                .then(() => setDirty(false))
+                .catch(() => {
+                    setDirty(false);
+                    addToast('Falha ao Salvar', 'error', 'Não foi possível salvar as alterações da tarefa.');
+                });
         }, 600);
     };
 
@@ -434,7 +504,7 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
     const selectedTaskRepository = selectedTask
         ? repositories.find((repo) => repo.id === selectedTask.repositoryId)
         : undefined;
-    const selectedTaskStatusLabel = selectedTask ? getTaskStatusLabel(selectedTask.status) : '';
+    const selectedTaskStatusLabel = selectedTask ? getTaskStatusLabel(selectedTask.status, 'kanban') : '';
     const recentCommentsSummary = summarizeRecentComments(comments);
     const selectedTaskDependencies = useMemo(() => {
         if (!selectedTask?.dependencies?.length) return [];
@@ -647,6 +717,7 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                                             task={task}
                                             onClick={setSelectedTask}
                                             onDragStart={handleDragStart}
+                                            onMoveRequest={handleMoveRequest}
                                         />
                                     ))}
 
@@ -682,7 +753,7 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                                 <div className="mb-3 flex items-center gap-2 text-xs">
                                     <span className="rounded-full border border-slate-200/80 bg-white/78 px-2 py-1 font-mono text-slate-500 shadow-sm shadow-slate-200/40 dark:border-white/10 dark:bg-white/[0.04] dark:text-[var(--text-muted)] dark:shadow-none">{selectedTask.id}</span>
                                     <div className={`rounded-full border px-2.5 py-1 capitalize font-semibold ${getPriorityStyles(selectedTask.priority).badge}`}>
-                                        Prioridade {getPriorityLabel(selectedTask.priority)}
+                                        Prioridade {getTaskPriorityLabel(selectedTask.priority)}
                                     </div>
                                 </div>
                                 <input
@@ -706,7 +777,7 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                             ].map(tab => (
                                 <button
                                     key={tab.id}
-                                    onClick={() => setActiveTab(tab.id as any)}
+                                    onClick={() => setActiveTab(tab.id as typeof activeTab)}
                                     className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 ${activeTab === tab.id ? 'border-primary-500 bg-primary-600 text-white shadow-lg shadow-primary-900/15' : 'border-slate-200/80 bg-slate-50/78 text-slate-500 shadow-sm shadow-slate-200/40 hover:border-slate-300 hover:text-slate-700 dark:border-white/10 dark:bg-white/[0.025] dark:text-slate-400 dark:shadow-none dark:hover:border-white/20 dark:hover:bg-white/[0.045] dark:hover:text-white'}`}
                                 >
                                     <tab.icon className="w-4 h-4" /> {tab.label}
@@ -789,7 +860,7 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                                                 <select
                                                     id="task-priority"
                                                     value={selectedTask.priority}
-                                                    onChange={(e) => updateTask({ priority: e.target.value as any })}
+                                                    onChange={(e) => updateTask({ priority: e.target.value as Task['priority'] })}
                                                     className="app-input w-full rounded-xl px-3 py-2 text-sm"
                                                 >
                                                     <option value="low">Baixa</option>
@@ -798,7 +869,7 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                                                 </select>
                                             </div>
                                             <div>
-                                                <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Risco</label>
+                                                <p className="mb-1 block text-xs font-semibold uppercase text-slate-500">Risco</p>
                                                 <div className="flex gap-2">
                                                     {(['low', 'medium', 'high'] as RiskLevel[]).map((risk) => (
                                                         <button
@@ -829,7 +900,7 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                                                 </div>
                                             </div>
                                             <div>
-                                                <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Repositório</label>
+                                                <p className="mb-1 block text-xs font-semibold uppercase text-slate-500">Repositório</p>
                                                 <div className="flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-slate-50/78 px-3 py-2.5 text-sm text-slate-600 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300">
                                                     <GitBranch className="h-4 w-4 text-slate-400" />
                                                     <span className="truncate">{selectedTaskRepository?.name || 'Sem repositório vinculado'}</span>
@@ -839,10 +910,11 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                                     </div>
 
                                     <div>
-                                        <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2">
+                                        <label htmlFor="task-description" className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2">
                                             <Edit2 className="w-4 h-4" /> Descrição
                                         </label>
                                         <textarea
+                                            id="task-description"
                                             value={selectedTask.description}
                                             onChange={(e) => updateTask({ description: e.target.value })}
                                             className="app-input h-36 w-full resize-none rounded-2xl p-4 text-sm leading-relaxed focus:ring-2 focus:ring-primary-500/30 focus:outline-none"
@@ -1019,7 +1091,7 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                                                             className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition-all ${selected ? 'border border-primary-500/40 bg-primary-500/10 text-primary-700 dark:text-primary-300' : 'border border-transparent hover:bg-slate-100/70 dark:hover:bg-white/[0.04]'}`}
                                                         >
                                                             <span className="min-w-0 truncate">{task.title}</span>
-                                                            <span className="ml-3 text-[11px] uppercase tracking-[0.14em] text-slate-400">{getTaskStatusLabel(task.status)}</span>
+                                                            <span className="ml-3 text-[11px] uppercase tracking-[0.14em] text-slate-400">{getTaskStatusLabel(task.status, 'kanban')}</span>
                                                         </button>
                                                     );
                                                 })}
@@ -1417,6 +1489,46 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
                     </div>
                 </div>
             )}
+
+            {/* Keyboard move-to menu */}
+            {moveMenu && (() => {
+                const otherColumns = columns.filter(c => c.id !== moveMenu.task.status);
+                return (
+                    <div
+                        ref={moveMenuRef}
+                        role="menu"
+                        aria-label="Mover tarefa para coluna"
+                        tabIndex={0}
+                        onKeyDown={handleMoveMenuKeyDown}
+                        onBlur={(e) => {
+                            if (!moveMenuRef.current?.contains(e.relatedTarget as Node)) setMoveMenu(null);
+                        }}
+                        className="fixed z-[9999] min-w-[180px] rounded-xl border border-slate-200/80 bg-white/95 py-1.5 shadow-xl backdrop-blur-sm dark:border-white/10 dark:bg-slate-800/95"
+                        style={{
+                            top: Math.min(moveMenu.rect.bottom + 4, window.innerHeight - (otherColumns.length * 36 + 12)),
+                            left: Math.min(moveMenu.rect.left, window.innerWidth - 200),
+                        }}
+                    >
+                        <p className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Mover para</p>
+                        {otherColumns.map((col, i) => (
+                            <button
+                                key={col.id}
+                                role="menuitem"
+                                aria-current={i === moveMenuIndex || undefined}
+                                onClick={() => handleMoveSelect(moveMenu.task, col.id)}
+                                onMouseEnter={() => setMoveMenuIndex(i)}
+                                className={`flex w-full items-center gap-2 px-3 py-1.5 text-sm transition-colors ${i === moveMenuIndex ? 'bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300' : 'text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-white/5'}`}
+                            >
+                                <span className={`h-2 w-2 rounded-full ${col.border.replace('border-t-', 'bg-')}`} />
+                                {col.label}
+                            </button>
+                        ))}
+                    </div>
+                );
+            })()}
+
+            {/* Aria-live announcer for status changes */}
+            <div aria-live="assertive" className="sr-only">{liveAnnouncement}</div>
         </div>
     );
 };

@@ -4,15 +4,7 @@ import { Task, Priority, TaskStatus, User, Repository } from '../types';
 import Avatar from './Avatar';
 import { Tag, FolderGit2 } from 'lucide-react';
 import AIFieldAssist from './AIFieldAssist';
-
-const getTaskStatusLabel = (status: TaskStatus): string => {
-  if (status === 'backlog') return 'Backlog';
-  if (status === 'todo') return 'A Fazer';
-  if (status === 'doing') return 'Em andamento';
-  if (status === 'review') return 'Em revisão';
-  if (status === 'ready') return 'Pronta';
-  return 'Concluída';
-};
+import { getTaskPriorityLabel, getTaskStatusLabel } from '../utils/statusPriority';
 
 interface NewTaskModalProps {
   isOpen: boolean;
@@ -34,7 +26,7 @@ const NewTaskModal: React.FC<NewTaskModalProps> = ({ isOpen, onClose, onCreate, 
   const assignee = users.find((user) => user.id === assigneeId);
   const repository = repos.find((repo) => repo.id === repoId);
   const parsedTags = tagsInput.split(',').map((tag) => tag.trim()).filter(Boolean);
-  const statusLabel = getTaskStatusLabel(status);
+  const statusLabel = getTaskStatusLabel(status, 'new-task');
 
   // Reset form when opening/closing would be handled by a useEffect in a real app or resetting on submit
 
@@ -193,7 +185,7 @@ const NewTaskModal: React.FC<NewTaskModalProps> = ({ isOpen, onClose, onCreate, 
                             : ''
                     }`}
                   >
-                    {p === 'low' ? 'Baixa' : p === 'medium' ? 'Média' : 'Alta'}
+                    {getTaskPriorityLabel(p, 'accented')}
                   </button>
                 ))}
               </div>
