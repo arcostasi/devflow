@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { ToastMessage } from '../types';
-import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Info, X, RotateCcw } from 'lucide-react';
 
 interface ToastContainerProps {
   toasts: ToastMessage[];
@@ -24,15 +24,16 @@ const ToastItem: React.FC<{ toast: ToastMessage; onRemove: () => void }> = ({ to
   useEffect(() => {
     // Animação de entrada
     requestAnimationFrame(() => setIsVisible(true));
-    
-    // Auto remover após 4 segundos
+
+    // Errors stay longer (8s) to give time to read/retry; others 4s
+    const duration = toast.type === 'error' ? 8000 : 4000;
     const timer = setTimeout(() => {
         setIsVisible(false);
         setTimeout(onRemove, 300); // Espera a animação de saída
-    }, 4000);
+    }, duration);
 
     return () => clearTimeout(timer);
-  }, [onRemove]);
+  }, [onRemove, toast.type]);
 
   const getIcon = () => {
     switch(toast.type) {
@@ -62,7 +63,7 @@ const ToastItem: React.FC<{ toast: ToastMessage; onRemove: () => void }> = ({ to
   };
 
   return (
-    <div 
+    <div
         role="status"
         aria-live="polite"
         className={`
@@ -74,6 +75,15 @@ const ToastItem: React.FC<{ toast: ToastMessage; onRemove: () => void }> = ({ to
         <div className="flex-1">
             <h4 className="text-sm font-semibold">{toast.title}</h4>
             {toast.description && <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{toast.description}</p>}
+            {toast.onRetry && (
+              <button
+                onClick={() => { toast.onRetry?.(); setIsVisible(false); setTimeout(onRemove, 300); }}
+                className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-slate-200/80 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-200 dark:hover:bg-white/[0.10]"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Tentar novamente
+              </button>
+            )}
         </div>
         <button
             onClick={() => { setIsVisible(false); setTimeout(onRemove, 300); }}

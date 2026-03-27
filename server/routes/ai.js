@@ -1,5 +1,7 @@
 import express from 'express';
 import { requireAuth } from '../middleware/auth.js';
+import { sendError } from '../utils.js';
+import { validate, fillFieldSchema } from '../validation.js';
 import {
     generateFieldContent,
     getAiDefaults,
@@ -37,7 +39,7 @@ router.get('/config', requireAuth, async (req, res) => {
             models,
         });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao carregar configuracoes de IA', details: err.message });
+        sendError(res, 500, 'Falha ao carregar configuracoes de IA', err.message);
     }
 });
 
@@ -46,7 +48,7 @@ router.get('/status', requireAuth, async (_req, res) => {
         const status = await getOllamaStatus();
         res.json(status);
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao consultar o Ollama', details: err.message });
+        sendError(res, 500, 'Falha ao consultar o Ollama', err.message);
     }
 });
 
@@ -55,11 +57,11 @@ router.get('/models', requireAuth, async (_req, res) => {
         const models = await listInstalledTextModels();
         res.json({ models });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao listar modelos locais', details: err.message });
+        sendError(res, 500, 'Falha ao listar modelos locais', err.message);
     }
 });
 
-router.post('/fill-field', requireAuth, async (req, res) => {
+router.post('/fill-field', requireAuth, validate(fillFieldSchema), async (req, res) => {
     const {
         fieldType,
         context,
@@ -71,10 +73,6 @@ router.post('/fill-field', requireAuth, async (req, res) => {
         constraints,
         retryOnGeneric,
     } = req.body || {};
-
-    if (!fieldType) {
-        return res.status(400).json({ error: 'fieldType e obrigatorio.' });
-    }
 
     try {
         const result = await generateFieldContent({
@@ -92,7 +90,7 @@ router.post('/fill-field', requireAuth, async (req, res) => {
 
         res.json(result);
     } catch (err) {
-        res.status(500).json({ error: err.message || 'Falha ao gerar conteudo com IA.' });
+        sendError(res, 500, 'Falha ao gerar conteudo com IA.', err.message);
     }
 });
 

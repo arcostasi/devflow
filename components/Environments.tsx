@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Environment, Deployment, Repository } from '../types';
+import { Environment, Deployment, Repository, getErrorMessage } from '../types';
 import { api } from '../services/api';
 import Modal from './Modal';
 import { useConfirm } from '../contexts/ConfirmContext';
@@ -9,6 +9,7 @@ import {
     ChevronUp, Plus, AlertCircle, Activity, Pencil, X
 } from 'lucide-react';
 import AIFieldAssist from './AIFieldAssist';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 
 interface EnvironmentsProps {
     repositories: Repository[];
@@ -121,6 +122,12 @@ const EnvironmentCard: React.FC<{
     const lastSavedSignatureRef = useRef(`${env.description || ''}|||${env.internalNotes || ''}`);
     const currentDraftSignature = `${draftDescription.trim()}|||${draftInternalNotes.trim()}`;
     const hasUnsyncedChanges = isInlineEditing && currentDraftSignature !== lastSavedSignatureRef.current;
+    const { setDirty: setEnvDirty } = useUnsavedChanges(`env-${env.id}`);
+
+    useEffect(() => {
+        setEnvDirty(hasUnsyncedChanges);
+    }, [hasUnsyncedChanges, setEnvDirty]);
+
     const environmentTypeLabel = getEnvironmentTypeLabel(env.type);
     const recentDeployments = summarizeDeployments(env.deployments);
 
@@ -1025,8 +1032,8 @@ const Environments: React.FC<EnvironmentsProps> = ({ repositories, addToast, onN
             const result = await api.deployToEnvironment(deployModal.envId, { version, notes });
             addToast('Deploy Realizado', 'success', result.message || 'A versão foi implantada no ambiente com sucesso.');
             loadEnvironments();
-        } catch (err: any) {
-            const errorMessage = err.message || 'Falha no deploy';
+        } catch (err: unknown) {
+            const errorMessage = getErrorMessage(err) || 'Falha no deploy';
             if (errorMessage.includes('O repositório está vazio') && onNavigateToGit) {
                 if (await confirm({ title: 'Repositório Vazio', message: 'O repositório está vazio. É necessário fazer o "Initial Commit" antes de realizar o deploy.\n\nDeseja ir para a tela de Controle de Fonte agora?', confirmText: 'Ir para Controle de Fonte', variant: 'warning' })) {
                     onNavigateToGit();
@@ -1055,8 +1062,8 @@ const Environments: React.FC<EnvironmentsProps> = ({ repositories, addToast, onN
             const result = await api.promoteEnvironment(targetEnv.id, sourceEnv.id);
             addToast('Promoção Realizada', 'success', result.message || 'A versão foi promovida para o próximo ambiente.');
             loadEnvironments();
-        } catch (err: any) {
-            addToast('Falha na Promoção', 'error', err.message || 'Não foi possível promover a versão.');
+        } catch (err: unknown) {
+            addToast('Falha na Promoção', 'error', getErrorMessage(err) || 'Não foi possível promover a versão.');
         }
     };
 
@@ -1065,8 +1072,8 @@ const Environments: React.FC<EnvironmentsProps> = ({ repositories, addToast, onN
             const result = await api.rollbackEnvironment(env.id);
             addToast('Rollback Realizado', 'success', result.message || 'O ambiente foi revertido para a versão anterior.');
             loadEnvironments();
-        } catch (err: any) {
-            addToast('Falha no Rollback', 'error', err.message || 'Não foi possível reverter o ambiente.');
+        } catch (err: unknown) {
+            addToast('Falha no Rollback', 'error', getErrorMessage(err) || 'Não foi possível reverter o ambiente.');
         }
     };
 
@@ -1075,8 +1082,8 @@ const Environments: React.FC<EnvironmentsProps> = ({ repositories, addToast, onN
             await api.createEnvironment(data);
             addToast('Ambiente Criado', 'success', `O ambiente "${data.name}" está pronto para uso.`);
             loadEnvironments();
-        } catch (err: any) {
-            addToast('Falha ao Criar Ambiente', 'error', err.message || 'Não foi possível criar o ambiente. Verifique os dados informados.');
+        } catch (err: unknown) {
+            addToast('Falha ao Criar Ambiente', 'error', getErrorMessage(err) || 'Não foi possível criar o ambiente. Verifique os dados informados.');
         }
     };
 
@@ -1087,8 +1094,8 @@ const Environments: React.FC<EnvironmentsProps> = ({ repositories, addToast, onN
             await api.updateEnvironment(editingEnvironment.id, data);
             addToast('Ambiente Atualizado', 'success', `As informações de "${data.name}" foram atualizadas.`);
             loadEnvironments();
-        } catch (err: any) {
-            addToast('Falha ao Atualizar Ambiente', 'error', err.message || 'Não foi possível atualizar o ambiente.');
+        } catch (err: unknown) {
+            addToast('Falha ao Atualizar Ambiente', 'error', getErrorMessage(err) || 'Não foi possível atualizar o ambiente.');
         }
     };
 
@@ -1101,8 +1108,8 @@ const Environments: React.FC<EnvironmentsProps> = ({ repositories, addToast, onN
             setEnvironments((prev) => prev.map((item) => item.id === envId ? { ...item, ...updates } : item));
             addToast('Texto do Ambiente Atualizado', 'success', `Descrição e notas de "${environment.name}" foram salvas.`);
             await loadEnvironments();
-        } catch (err: any) {
-            addToast('Falha ao Salvar Texto', 'error', err.message || 'Não foi possível salvar descrição e notas internas.');
+        } catch (err: unknown) {
+            addToast('Falha ao Salvar Texto', 'error', getErrorMessage(err) || 'Não foi possível salvar descrição e notas internas.');
             throw err;
         }
     };

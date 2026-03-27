@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { GitChange, FileNode, ActivityLog, Repository, GitCommit, GitIntegrationTab } from '../types';
+import { GitChange, FileNode, ActivityLog, Repository, GitCommit, GitIntegrationTab, getErrorMessage } from '../types';
 import { api } from '../services/api';
 import { GitBranch, RefreshCw, Check, Undo2, Plus, FileCode, FilePlus, FileMinus, ChevronRight, ChevronDown, Sparkles, ArrowDown, ArrowUp, Folder, FolderOpen, BarChart3, Zap, Flame, FolderGit2, Link, Settings2, AlertTriangle, Trash2 } from 'lucide-react';
 import { useConfirm } from '../contexts/ConfirmContext';
@@ -284,7 +284,7 @@ const MarkdownViewer: React.FC<{ content: string }> = ({ content }) => {
                 <Markdown
                     remarkPlugins={[remarkGfm]}
                     components={{
-                        code: ({ node: _node, inline, className, children, ...props }: any) =>
+                        code: ({ node: _node, inline, className, children, ...props }: { node?: unknown; inline?: boolean; className?: string; children?: React.ReactNode; [key: string]: unknown }) =>
                             renderMarkdownCodeNode(isDark, Boolean(inline), className, children, props)
                     }}
                 >
@@ -586,7 +586,7 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
                     setRemoteUrlInput(originUrl);
                 } catch { /* remote opcional */ }
 
-            } catch (err: any) {
+            } catch (err: unknown) {
                 const msg: string = err?.message || '';
                 if (msg.includes('não encontrado') || msg.includes('not found') || msg.includes('ENOENT')) {
                     setRepoPathMissing(true);
@@ -618,8 +618,8 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
             setRepoFiles(fileNodes);
             setCurrentSubPath(subPath);
             setActiveFileNode(null);
-        } catch (err: any) {
-            addToast('Falha ao Abrir Diretório', 'error', err.message || 'Não foi possível acessar o diretório solicitado.');
+        } catch (err: unknown) {
+            addToast('Falha ao Abrir Diretório', 'error', getErrorMessage(err) || 'Não foi possível acessar o diretório solicitado.');
         }
     };
 
@@ -637,8 +637,8 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
             }));
             setChanges(cleanedChanges);
             if (onRefreshData) onRefreshData();
-        } catch (e: any) {
-            addToast('Falha no Pull', 'error', e.message || `Não foi possível atualizar a branch ${currentBranch}.`);
+        } catch (e: unknown) {
+            addToast('Falha no Pull', 'error', getErrorMessage(e) || `Não foi possível atualizar a branch ${currentBranch}.`);
         } finally {
             setIsPulling(false);
         }
@@ -651,8 +651,8 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
             setRemoteUrl(remoteUrlInput.trim());
             setIsRemoteConfigOpen(false);
             addToast('Remote Configurado', 'success', `URL remota definida como ${remoteUrlInput.trim()}`);
-        } catch (e: any) {
-            addToast('Falha ao Configurar Remote', 'error', e.message || 'Verifique a URL informada e tente novamente.');
+        } catch (e: unknown) {
+            addToast('Falha ao Configurar Remote', 'error', getErrorMessage(e) || 'Verifique a URL informada e tente novamente.');
         }
     };
 
@@ -665,11 +665,11 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
         if (selectedFileId === id) setSelectedFileId(null);
         try {
             await api.stageFiles(selectedRepoId, [file.file]);
-        } catch (err: any) {
+        } catch (err: unknown) {
             // Rollback on failure
             setChanges(prev => [...prev, file]);
             setStagedChanges(prev => prev.filter(c => c.id !== id));
-            addToast('Falha no Stage', 'error', err.message || 'Não foi possível adicionar o arquivo ao stage.');
+            addToast('Falha no Stage', 'error', getErrorMessage(err) || 'Não foi possível adicionar o arquivo ao stage.');
         }
     };
 
@@ -682,11 +682,11 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
         if (selectedFileId === id) setSelectedFileId(null);
         try {
             await api.unstageFiles(selectedRepoId, [file.file]);
-        } catch (err: any) {
+        } catch (err: unknown) {
             // Rollback on failure
             setStagedChanges(prev => [...prev, file]);
             setChanges(prev => prev.filter(c => c.id !== id));
-            addToast('Falha no Unstage', 'error', err.message || 'Não foi possível remover o arquivo do stage.');
+            addToast('Falha no Unstage', 'error', getErrorMessage(err) || 'Não foi possível remover o arquivo do stage.');
         }
     };
 
@@ -698,11 +698,11 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
         setChanges([]);
         try {
             await api.stageFiles(selectedRepoId, toStage.map(c => c.file));
-        } catch (err: any) {
+        } catch (err: unknown) {
             // Rollback
             setChanges(prev => [...prev, ...toStage]);
             setStagedChanges(prev => removeChangesById(prev, toStageIds));
-            addToast('Falha no Stage', 'error', err.message || 'Não foi possível adicionar os arquivos ao stage.');
+            addToast('Falha no Stage', 'error', getErrorMessage(err) || 'Não foi possível adicionar os arquivos ao stage.');
         }
     };
 
@@ -714,11 +714,11 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
         setStagedChanges([]);
         try {
             await api.unstageFiles(selectedRepoId, toUnstage.map(c => c.file));
-        } catch (err: any) {
+        } catch (err: unknown) {
             // Rollback
             setStagedChanges(prev => [...prev, ...toUnstage]);
             setChanges(prev => removeChangesById(prev, toUnstageIds));
-            addToast('Falha no Unstage', 'error', err.message || 'Não foi possível remover os arquivos do stage.');
+            addToast('Falha no Unstage', 'error', getErrorMessage(err) || 'Não foi possível remover os arquivos do stage.');
         }
     };
 
@@ -733,6 +733,9 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
 
         api.fillAIField({
             fieldType: 'commit_message',
+            surface: 'git_commit',
+            intent: commitMessage.trim() ? 'refine' : 'generate',
+            currentValue: commitMessage.trim() || undefined,
             context: {
                 repositoryName: selectedRepo?.name || '',
                 currentBranch,
@@ -782,8 +785,8 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
             }));
             setChanges(cleanedChanges);
             if (onRefreshData) onRefreshData();
-        } catch (e: any) {
-            addToast('Falha no Commit', 'error', e.message || 'Não foi possível criar o commit. Verifique os arquivos no stage.');
+        } catch (e: unknown) {
+            addToast('Falha no Commit', 'error', getErrorMessage(e) || 'Não foi possível criar o commit. Verifique os arquivos no stage.');
         }
     };
 
@@ -794,8 +797,8 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
             const result = await api.pushRepo(selectedRepoId, 'origin', currentBranch);
             logActivity('realizou push', currentBranch, 'repo');
             addToast('Push Concluído', 'success', result.message || `Alterações enviadas para origin/${currentBranch}.`);
-        } catch (e: any) {
-            addToast('Falha no Push', 'error', e.message || `Não foi possível enviar as alterações para origin/${currentBranch}.`);
+        } catch (e: unknown) {
+            addToast('Falha no Push', 'error', getErrorMessage(e) || `Não foi possível enviar as alterações para origin/${currentBranch}.`);
         } finally {
             setIsPushing(false);
         }
@@ -815,8 +818,8 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
             setIsNewBranchOpen(false);
             logActivity('criou branch', createdName, 'repo');
             addToast('Branch Criada', 'success', `Você está agora na branch ${createdName}.`);
-        } catch (e: any) {
-            addToast('Falha ao Criar Branch', 'error', e.message || 'Não foi possível criar a nova branch.');
+        } catch (e: unknown) {
+            addToast('Falha ao Criar Branch', 'error', getErrorMessage(e) || 'Não foi possível criar a nova branch.');
         }
     };
 
@@ -835,8 +838,8 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
             }));
             setChanges(cleanedChanges);
             setStagedChanges([]);
-        } catch (e: any) {
-            addToast('Falha no Checkout', 'error', e.message || `Não foi possível alternar para a branch ${branch}.`);
+        } catch (e: unknown) {
+            addToast('Falha no Checkout', 'error', getErrorMessage(e) || `Não foi possível alternar para a branch ${branch}.`);
         } finally {
             setIsCheckingOut(false);
         }
@@ -1009,8 +1012,8 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
                                         await api.deleteRepo(selectedRepoId);
                                         addToast('Repositório Removido', 'info', `"${selectedRepo?.name}" foi removido do DevFlow. Os arquivos locais não foram afetados.`);
                                         if (onRefreshData) onRefreshData();
-                                    } catch (e: any) {
-                                        addToast('Falha ao Remover', 'error', e.message || 'Não foi possível remover o repositório do sistema.');
+                                    } catch (e: unknown) {
+                                        addToast('Falha ao Remover', 'error', getErrorMessage(e) || 'Não foi possível remover o repositório do sistema.');
                                     }
                                 }}
                                 className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-amber-200 bg-amber-100/80 px-2 py-1.5 text-[10px] font-semibold text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-700/50 dark:bg-amber-800/30 dark:text-amber-400 dark:hover:bg-amber-800/50"

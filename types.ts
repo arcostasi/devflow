@@ -121,6 +121,13 @@ export interface User {
   avatar: string;
 }
 
+export interface AdminUser extends User {
+  email: string;
+  role: 'admin' | 'user';
+  status: 'active' | 'pending' | 'inactive';
+  createdAt?: string;
+}
+
 export interface Comment {
   id: string;
   author: User;
@@ -193,6 +200,9 @@ export interface Repository {
   issues: number;
   localPath?: string;
   stars?: number;
+  pathMissing?: boolean;
+  lastPipelineStatus?: 'success' | 'failed' | 'running';
+  gitlabProjectPath?: string;
 }
 
 export interface ActivityLog {
@@ -204,6 +214,18 @@ export interface ActivityLog {
   taskId?: string;
   timestamp: string;
   meta?: string;
+}
+
+export interface Notification {
+  id: string;
+  userId: string;
+  type: 'task' | 'commit' | 'pr' | 'sprint' | 'deploy' | 'repo' | 'activity';
+  title: string;
+  body?: string;
+  relatedType?: string;
+  relatedId?: string;
+  read: number;
+  createdAt: string;
 }
 
 export interface GitChange {
@@ -236,6 +258,7 @@ export interface ToastMessage {
   title: string;
   description?: string;
   type: 'success' | 'error' | 'info';
+  onRetry?: () => void;
 }
 
 export interface AIModelInfo {
@@ -304,4 +327,65 @@ export enum ViewState {
   ENVIRONMENTS = 'environments', // MVP-2: Deployment environments
   SETTINGS = 'settings',
   TEAM = 'team'
+}
+
+export interface DashboardStats {
+  totalTasks: number;
+  completedTasks: number;
+  activeSprints: number;
+  totalRepos: number;
+  recentActivities: ActivityLog[];
+  sprintProgress?: number;
+  teamVelocity?: number;
+}
+
+export interface Integration {
+  id: string;
+  userId: string;
+  provider: 'gitlab' | 'clickup' | 'clickup_mcp';
+  accessToken?: string;
+  refreshToken?: string;
+  metadata?: string;
+  meta: Record<string, string>;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface ClickUpTool {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+export interface McpAuditItem {
+  id: string;
+  toolName: string;
+  actionType?: string;
+  status: 'success' | 'failed';
+  requestPayload?: Record<string, unknown>;
+  responseSummary?: string;
+  workspaceId?: string;
+  executedAt: string;
+  createdAt?: string;
+}
+
+export interface AdminGroup {
+  id: string;
+  name: string;
+  description: string;
+  permissions: string[];
+}
+
+export interface SystemSettings {
+  gitDirectory: string;
+  allowSelfRegister: string;
+  requireApproval: string;
+  [key: string]: string;
+}
+
+/** Safely extract an error message from an unknown caught value. */
+export function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  return 'Erro desconhecido';
 }

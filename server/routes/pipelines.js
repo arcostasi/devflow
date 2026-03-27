@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { sendError } from '../utils.js';
 import { decrypt } from '../crypto.js';
 
 const router = express.Router();
@@ -40,7 +41,7 @@ router.get('/', requireAuth, (req, res) => {
         res.json(formatted);
     } catch (err) {
         console.error('Failed to fetch pipelines:', err);
-        res.status(500).json({ error: 'Failed to fetch pipelines' });
+        sendError(res, 500, 'Failed to fetch pipelines');
     }
 });
 
@@ -50,7 +51,7 @@ router.get('/:id', requireAuth, (req, res) => {
         const pipeline = db.prepare('SELECT * FROM pipelines WHERE id = ?').get(req.params.id);
 
         if (!pipeline) {
-            return res.status(404).json({ error: 'Pipeline not found' });
+            return sendError(res, 404, 'Pipeline not found');
         }
 
         res.json({
@@ -58,7 +59,7 @@ router.get('/:id', requireAuth, (req, res) => {
             stages: pipeline.stages ? JSON.parse(pipeline.stages) : []
         });
     } catch (_err) {
-        res.status(500).json({ error: 'Failed to fetch pipeline' });
+        sendError(res, 500, 'Failed to fetch pipeline');
     }
 });
 
@@ -74,13 +75,13 @@ router.post('/sync/:repoId', requireAuth, async (req, res) => {
         ).get(req.user.id, 'gitlab');
 
         if (!integration) {
-            return res.status(400).json({ error: 'GitLab not connected' });
+            return sendError(res, 400, 'GitLab not connected');
         }
 
         // Get repository info
         const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(repoId);
         if (!repo) {
-            return res.status(404).json({ error: 'Repository not found' });
+            return sendError(res, 404, 'Repository not found');
         }
 
         const token = decrypt(integration.token);
@@ -91,9 +92,7 @@ router.post('/sync/:repoId', requireAuth, async (req, res) => {
         // Use explicit gitlabProjectPath if set, otherwise fall back to repo.name
         const rawProjectPath = repo.gitlabProjectPath || repo.name;
         if (!rawProjectPath || !rawProjectPath.includes('/')) {
-            return res.status(400).json({
-                error: `Configure o "GitLab Project Path" do repositório (ex: namespace/projeto). Valor atual: "${rawProjectPath}"`
-            });
+            return sendError(res, 400, `Configure o "GitLab Project Path" do repositório (ex: namespace/projeto). Valor atual: "${rawProjectPath}"`);
         }
         const projectPath = encodeURIComponent(rawProjectPath);
 
@@ -110,10 +109,7 @@ router.post('/sync/:repoId', requireAuth, async (req, res) => {
         if (!response.ok) {
             const errorText = await response.text();
             console.error('GitLab API error:', response.status, errorText);
-            return res.status(response.status).json({
-                error: 'Failed to fetch pipelines from GitLab',
-                details: errorText
-            });
+            return sendError(res, response.status, 'Failed to fetch pipelines from GitLab', errorText);
         }
 
         const gitlabPipelines = await response.json();
@@ -123,7 +119,7 @@ router.post('/sync/:repoId', requireAuth, async (req, res) => {
         const stmt = db.prepare(`
             INSERT INTO pipelines (id, repoId, gitlabPipelineId, status, stages, webUrl, ref, sha, createdAt, finishedAt)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET 
+            ON CONFLICT(id) DO UPDATE SET
                 status = excluded.status,
                 stages = excluded.stages,
                 finishedAt = excluded.finishedAt
@@ -183,7 +179,7 @@ router.post('/sync/:repoId', requireAuth, async (req, res) => {
 
     } catch (err) {
         console.error('Pipeline sync error:', err);
-        res.status(500).json({ error: 'Pipeline synchronization failed' });
+        sendError(res, 500, 'Pipeline synchronization failed');
     }
 });
 
@@ -201,7 +197,7 @@ router.get('/task/:taskId', requireAuth, (req, res) => {
 
         res.json(formatted);
     } catch (_err) {
-        res.status(500).json({ error: 'Failed to fetch task pipelines' });
+        sendError(res, 500, 'Failed to fetch task pipelines');
     }
 });
 
@@ -212,19 +208,19 @@ router.post('/:id/link/:taskId', requireAuth, (req, res) => {
     try {
         const pipeline = db.prepare('SELECT * FROM pipelines WHERE id = ?').get(id);
         if (!pipeline) {
-            return res.status(404).json({ error: 'Pipeline not found' });
+            return sendError(res, 404, 'Pipeline not found');
         }
 
         const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
         if (!task) {
-            return res.status(404).json({ error: 'Task not found' });
+            return sendError(res, 404, 'Task not found');
         }
 
         db.prepare('UPDATE pipelines SET taskId = ? WHERE id = ?').run(taskId, id);
 
         res.json({ success: true, message: 'Pipeline linked to task' });
     } catch (_err) {
-        res.status(500).json({ error: 'Failed to link pipeline' });
+        sendError(res, 500, 'Failed to link pipeline');
     }
 });
 
@@ -234,7 +230,7 @@ router.delete('/:id/link', requireAuth, (req, res) => {
         db.prepare('UPDATE pipelines SET taskId = NULL WHERE id = ?').run(req.params.id);
         res.json({ success: true, message: 'Pipeline unlinked' });
     } catch (_err) {
-        res.status(500).json({ error: 'Failed to unlink pipeline' });
+        sendError(res, 500, 'Failed to unlink pipeline');
     }
 });
 

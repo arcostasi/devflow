@@ -8,6 +8,9 @@ const __dirname = path.dirname(__filename);
 const dbPath = path.resolve(__dirname, '../devflow.db');
 const db = new Database(dbPath);
 
+// Enforce foreign key constraints
+db.pragma('foreign_keys = ON');
+
 // Initialize Schema
 const schema = `
   CREATE TABLE IF NOT EXISTS users (
@@ -207,6 +210,30 @@ const schema = `
     enabled INTEGER DEFAULT 1,
     createdAt TEXT DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- Refresh tokens for session continuity
+  CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id TEXT PRIMARY KEY,
+    userId TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    expiresAt TEXT NOT NULL,
+    createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  -- Notifications
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    userId TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'activity',
+    title TEXT NOT NULL,
+    body TEXT,
+    relatedType TEXT,
+    relatedId TEXT,
+    read INTEGER DEFAULT 0,
+    createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
+  );
 `;
 
 db.exec(schema);
@@ -238,6 +265,29 @@ for (const sql of migrations) {
       console.warn('Migration warning:', err.message);
     }
   }
+}
+
+// Performance indexes on frequently queried foreign keys and filter columns
+const indexes = [
+  'CREATE INDEX IF NOT EXISTS idx_tasks_sprintId ON tasks(sprintId)',
+  'CREATE INDEX IF NOT EXISTS idx_tasks_assigneeId ON tasks(assigneeId)',
+  'CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)',
+  'CREATE INDEX IF NOT EXISTS idx_tasks_repositoryId ON tasks(repositoryId)',
+  'CREATE INDEX IF NOT EXISTS idx_subtasks_taskId ON subtasks(taskId)',
+  'CREATE INDEX IF NOT EXISTS idx_comments_taskId ON comments(taskId)',
+  'CREATE INDEX IF NOT EXISTS idx_activities_userId_timestamp ON activities(userId, timestamp)',
+  'CREATE INDEX IF NOT EXISTS idx_activities_taskId ON activities(taskId)',
+  'CREATE INDEX IF NOT EXISTS idx_notifications_userId_read ON notifications(userId, read)',
+  'CREATE INDEX IF NOT EXISTS idx_notifications_createdAt ON notifications(createdAt)',
+  'CREATE INDEX IF NOT EXISTS idx_deployments_environmentId ON deployments(environmentId)',
+  'CREATE INDEX IF NOT EXISTS idx_pipelines_repoId ON pipelines(repoId)',
+  'CREATE INDEX IF NOT EXISTS idx_environments_repoId ON environments(repoId)',
+  'CREATE INDEX IF NOT EXISTS idx_integrations_userId ON integrations(userId)',
+  'CREATE INDEX IF NOT EXISTS idx_refresh_tokens_userId ON refresh_tokens(userId)',
+  'CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token)',
+];
+for (const sql of indexes) {
+  db.exec(sql);
 }
 
 export default db;

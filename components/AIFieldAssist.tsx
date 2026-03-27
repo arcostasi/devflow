@@ -7,6 +7,7 @@ import {
   AIFieldType,
   AIIntent,
   AISurface,
+  getErrorMessage,
 } from '../types';
 
 interface AIFieldAssistProps {
@@ -101,8 +102,8 @@ const AIFieldAssist: React.FC<AIFieldAssistProps> = ({
       onApply(result);
       setLastMeta({ model: result.model, language: result.language });
       setWarning(result.warning || '');
-    } catch (err: any) {
-      setError(err.message || 'Não foi possível gerar conteúdo com IA.');
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || 'Não foi possível gerar conteúdo com IA.');
     } finally {
       setIsLoading(false);
     }

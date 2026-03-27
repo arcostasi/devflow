@@ -1,5 +1,5 @@
 
-import React, { Suspense, lazy, useState, useEffect, useMemo } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useMemo, Component, ErrorInfo, ReactNode } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import CommandPalette from './components/CommandPalette';
@@ -9,7 +9,7 @@ import NewRepoModal from './components/NewRepoModal';
 import ManageSprintsModal from './components/ManageSprintsModal';
 import LoginPage from './components/LoginPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { ConfirmProvider } from './contexts/ConfirmContext';
+import { ConfirmProvider, useConfirm } from './contexts/ConfirmContext';
 import {
   ViewState,
   ThemeMode,
@@ -24,10 +24,14 @@ import {
   RepoDetailTab,
   GitIntegrationTab,
   WorkspaceNavigationTarget,
+  DashboardStats,
+  AdminUser,
+  getErrorMessage,
 } from './types';
 import { initialActivities } from './services/data';
 import { api } from './services/api';
-import { Loader2 } from 'lucide-react';
+import { hasUnsavedChanges } from './hooks/useUnsavedChanges';
+import { Loader2, AlertTriangle, RotateCcw } from 'lucide-react';
 
 const Dashboard = lazy(() => import('./components/Dashboard'));
 const Kanban = lazy(() => import('./components/Kanban').then((module) => ({ default: module.Kanban })));
@@ -47,9 +51,85 @@ const ScreenLoader: React.FC = () => (
   </div>
 );
 
+// Global Error Boundary — catches unhandled React render errors
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[ErrorBoundary] Uncaught render error:', error, info.componentStack);
+  }
+
+  handleReset = () => {
+    this.setState({ hasError: false, error: null });
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-950 p-6">
+          <div className="max-w-md w-full rounded-2xl border border-red-200 bg-white p-8 shadow-lg dark:border-red-900/40 dark:bg-slate-900">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-100 dark:bg-red-900/30">
+                <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
+              </div>
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Algo deu errado</h2>
+            </div>
+            <p className="mb-2 text-sm text-slate-600 dark:text-slate-400">
+              Ocorreu um erro inesperado na aplicação. Tente recarregar a página ou voltar ao estado anterior.
+            </p>
+            {this.state.error && (
+              <pre className="mb-4 max-h-24 overflow-auto rounded-lg bg-slate-100 p-3 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                {this.state.error.message}
+              </pre>
+            )}
+            <div className="flex gap-3">
+              <button
+                onClick={this.handleReset}
+                className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 transition-colors"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Tentar novamente
+              </button>
+              <button
+                onClick={() => globalThis.location.reload()}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+              >
+                Recarregar página
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 const AppContent: React.FC = () => {
   const { isAuthenticated, isLoading, user } = useAuth();
   const [currentView, setCurrentView] = useState<ViewState>(ViewState.DASHBOARD);
+  const { confirm } = useConfirm();
+
+  const guardedSetView = async (view: ViewState) => {
+    if (view !== currentView && hasUnsavedChanges()) {
+      const ok = await confirm('Você tem alterações não salvas. Deseja sair desta página?', 'Alterações não salvas');
+      if (!ok) return;
+    }
+    setCurrentView(view);
+  };
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
   const [densityMode, setDensityMode] = useState<DensityMode>('comfortable');
   const [isEffectiveDark, setIsEffectiveDark] = useState(false);
@@ -70,11 +150,11 @@ const AppContent: React.FC = () => {
   const [sprints, setSprints] = useState<Sprint[]>([]);
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [activeSprint, setActiveSprint] = useState<Sprint | null>(null);
-  const [users, setUsers] = useState<any[]>([]);
-  const [dashboardStats, setDashboardStats] = useState<any>(null);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null);
   const [isWorkspaceDataLoading, setIsWorkspaceDataLoading] = useState(true);
   const activeUsers = useMemo(
-    () => users.filter((currentUser: any) => currentUser.status !== 'pending' && currentUser.status !== 'inactive'),
+    () => users.filter((currentUser) => currentUser.status !== 'pending' && currentUser.status !== 'inactive'),
     [users]
   );
 
@@ -86,19 +166,19 @@ const AppContent: React.FC = () => {
   const loadData = async () => {
     setIsWorkspaceDataLoading(true);
     try {
-      const [fetchedTasks, fetchedRepos, fetchedSprints, fetchedUsers, fetchedActivities, fetchedStats, fetchedEnvironments] = await Promise.all([
+      const [fetchedTasks, fetchedRepos, fetchedSprints, fetchedUsers, fetchedActivitiesResult, fetchedStats, fetchedEnvironments] = await Promise.all([
         api.getTasks(),
         api.getRepos(),
         api.getSprints(),
         api.getUsers(),
-        api.getActivities(),
+        api.getActivities({ limit: 50 }),
         api.getDashboardStats(),
         api.getEnvironments(),
       ]);
       setTasks(fetchedTasks);
       setRepos(fetchedRepos);
       setUsers(fetchedUsers);
-      setActivities(fetchedActivities);
+      setActivities(fetchedActivitiesResult.items);
       setDashboardStats(fetchedStats);
       setSprints(fetchedSprints);
       setEnvironments(fetchedEnvironments);
@@ -107,15 +187,19 @@ const AppContent: React.FC = () => {
       if (active) setActiveSprint(active);
     } catch (error) {
       console.error("Failed to load data", error);
-      addToast("Falha ao Carregar Dados", "error", "Não foi possível conectar ao servidor. Verifique se o serviço está ativo.");
+      addToast("Falha ao Carregar Dados", "error", "Não foi possível conectar ao servidor. Verifique se o serviço está ativo.", () => loadData());
     } finally {
       setIsWorkspaceDataLoading(false);
     }
   };
 
-  const addToast = (title: string, type: 'success' | 'error' | 'info' = 'info', description?: string) => {
-    const id = Math.random().toString(36).substring(7);
-    setToasts(prev => [...prev, { id, title, type, description }]);
+  const addToast = (title: string, type: 'success' | 'error' | 'info' = 'info', description?: string, onRetry?: () => void) => {
+    // Deduplicate: skip if an identical toast (same title + type) already exists
+    setToasts(prev => {
+      if (prev.some(t => t.title === title && t.type === type)) return prev;
+      const id = Math.random().toString(36).substring(7);
+      return [...prev, { id, title, type, description, onRetry }];
+    });
   };
 
   const removeToast = (id: string) => {
@@ -126,7 +210,7 @@ const AppContent: React.FC = () => {
     const id = `a-${Date.now()}`;
     const newLog: ActivityLog = {
       id,
-      user: { ...user, avatar: user?.avatar || '' } as any,
+      user: { id: user!.id, name: user!.name, avatar: user?.avatar || '' },
       action,
       target,
       targetType,
@@ -186,8 +270,8 @@ const AppContent: React.FC = () => {
       await api.createRepo({ ...newRepo, localPath: repoData.localPath, linkExisting: repoData.linkExisting });
       setRepos(prev => [...prev, newRepo]);
       addToast('Repositório Adicionado', 'success', repoData.linkExisting ? `"${repoData.name}" vinculado ao DevFlow.` : `"${repoData.name}" criado e pronto para uso.`);
-    } catch (e: any) {
-      addToast('Falha ao Criar Repositório', 'error', e.message || 'Verifique o caminho informado e tente novamente.');
+    } catch (e: unknown) {
+      addToast('Falha ao Criar Repositório', 'error', getErrorMessage(e) || 'Verifique o caminho informado e tente novamente.');
     }
   };
 
@@ -232,7 +316,7 @@ const AppContent: React.FC = () => {
   const handleOpenTask = (task: Task, source: WorkspaceNavigationTarget['source'] = 'dashboard') => {
     setNavigationTarget({ source, taskId: task.id });
     setSelectedTaskId(task.id);
-    setCurrentView(ViewState.KANBAN);
+    guardedSetView(ViewState.KANBAN);
   };
 
   const handleOpenRepo = (
@@ -248,7 +332,7 @@ const AppContent: React.FC = () => {
       repoDetailTab: options.tab || 'code',
     });
     setSelectedRepoId(id);
-    setCurrentView(ViewState.REPO_DETAIL);
+    guardedSetView(ViewState.REPO_DETAIL);
   };
 
   const handleOpenRepoGit = (
@@ -263,7 +347,7 @@ const AppContent: React.FC = () => {
       repoId: id,
       gitTab: options.tab || 'changes',
     });
-    setCurrentView(ViewState.GIT);
+    guardedSetView(ViewState.GIT);
   };
 
   const handleOpenEnvironment = (
@@ -278,7 +362,7 @@ const AppContent: React.FC = () => {
       environmentId,
       repoId: options.repoId || null,
     });
-    setCurrentView(ViewState.ENVIRONMENTS);
+    guardedSetView(ViewState.ENVIRONMENTS);
   };
 
   const handleActivateSprint = async (sprintId: string) => {
@@ -289,9 +373,9 @@ const AppContent: React.FC = () => {
       await api.updateSprint(sprintId, { status: 'active' });
       addToast('Sprint ativada', 'success', `"${sprint.name}" agora está em execução.`);
       await loadData();
-      setCurrentView(ViewState.KANBAN);
-    } catch (error: any) {
-      addToast('Falha ao ativar sprint', 'error', error.message || 'Não foi possível ativar a sprint selecionada.');
+      guardedSetView(ViewState.KANBAN);
+    } catch (error: unknown) {
+      addToast('Falha ao ativar sprint', 'error', getErrorMessage(error) || 'Não foi possível ativar a sprint selecionada.');
     }
   };
 
@@ -303,7 +387,7 @@ const AppContent: React.FC = () => {
             activities={activities}
             tasks={tasks}
             repositories={repos}
-            onNavigate={setCurrentView}
+            onNavigate={guardedSetView}
             onCreateTask={() => openNewTaskModal('todo')}
             onCreateRepo={() => setIsNewRepoModalOpen(true)}
             onOpenRepo={(id) => handleOpenRepo(id, { source: 'dashboard' })}
@@ -339,6 +423,7 @@ const AppContent: React.FC = () => {
             openManageSprintsModal={() => setIsManageSprintsModalOpen(true)}
             activeSprint={activeSprint}
             onRefreshData={loadData}
+            isLoading={isWorkspaceDataLoading}
           />
         );
       case ViewState.GIT:
@@ -383,7 +468,7 @@ const AppContent: React.FC = () => {
           <RepoDetail
             repo={selectedRepo}
             tasks={tasks}
-            onBack={() => setCurrentView(ViewState.REPOS)}
+            onBack={() => guardedSetView(ViewState.REPOS)}
             onNavigateToTask={(task) => handleOpenTask(task, 'repo_detail')}
             addToast={addToast}
             onDeleteRepo={handleDeleteRepo}
@@ -397,7 +482,7 @@ const AppContent: React.FC = () => {
           <Environments
             repositories={repos}
             addToast={addToast}
-            onNavigateToGit={() => setCurrentView(ViewState.GIT)}
+            onNavigateToGit={() => guardedSetView(ViewState.GIT)}
             preferredRepoId={currentView === ViewState.ENVIRONMENTS ? navigationTarget?.repoId ?? null : null}
             preferredEnvironmentId={currentView === ViewState.ENVIRONMENTS ? navigationTarget?.environmentId ?? null : null}
           />
@@ -410,7 +495,7 @@ const AppContent: React.FC = () => {
             activities={activities}
             tasks={tasks}
             repositories={repos}
-            onNavigate={setCurrentView}
+            onNavigate={guardedSetView}
             onCreateTask={() => openNewTaskModal('todo')}
             onCreateRepo={() => setIsNewRepoModalOpen(true)}
             onOpenRepo={(id) => handleOpenRepo(id, { source: 'dashboard' })}
@@ -456,7 +541,7 @@ const AppContent: React.FC = () => {
       <CommandPalette
         isOpen={isCmdOpen}
         setIsOpen={setIsCmdOpen}
-        setView={setCurrentView}
+        setView={guardedSetView}
         toggleTheme={toggleTheme}
         openNewTaskModal={() => openNewTaskModal('todo')}
         openNewRepoModal={() => setIsNewRepoModalOpen(true)}
@@ -495,7 +580,7 @@ const AppContent: React.FC = () => {
 
       <ToastContainer toasts={toasts} removeToast={removeToast} />
 
-      <Sidebar currentView={currentView} setView={setCurrentView} />
+      <Sidebar currentView={currentView} setView={guardedSetView} />
 
       <div className="app-workspace-shell flex-1 flex flex-col min-w-0 rounded-[1.6rem] overflow-hidden">
         <Header
@@ -518,11 +603,13 @@ const AppContent: React.FC = () => {
 
 const App: React.FC = () => {
   return (
-    <AuthProvider>
-      <ConfirmProvider>
-        <AppContent />
-      </ConfirmProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <ConfirmProvider>
+          <AppContent />
+        </ConfirmProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 };
 

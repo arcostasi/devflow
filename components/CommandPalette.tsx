@@ -29,6 +29,11 @@ interface CommandPaletteProps {
   onOpenEnvironment: (environmentId: string, repoId?: string | null) => void;
 }
 
+const formatEnvironmentMeta = (repoNameOrId: string, type: string, currentVersion?: string) => {
+  const versionPart = currentVersion ? ` · ${currentVersion}` : '';
+  return `${repoNameOrId} · ${type}${versionPart}`;
+};
+
 const CommandPalette: React.FC<CommandPaletteProps> = ({
   isOpen,
   setIsOpen,
@@ -133,7 +138,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
           icon: Rocket,
           action: () => { onOpenEnvironment(environment.id, environment.repoId); setIsOpen(false); },
           group: 'Ambientes',
-          meta: `${repo?.name || environment.repoId} · ${environment.type}${environment.currentVersion ? ` · ${environment.currentVersion}` : ''}`,
+          meta: formatEnvironmentMeta(repo?.name || environment.repoId, environment.type, environment.currentVersion),
         };
       }),
   [environments, onOpenEnvironment, repoById, setIsOpen]);
@@ -202,7 +207,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
         icon: Rocket,
         action: () => { onOpenEnvironment(environment.id, environment.repoId); setIsOpen(false); },
         group: 'Ambientes',
-        meta: `${repo?.name || environment.repoId} · ${environment.type}${environment.currentVersion ? ` · ${environment.currentVersion}` : ''}`,
+        meta: formatEnvironmentMeta(repo?.name || environment.repoId, environment.type, environment.currentVersion),
       };
     });
 
@@ -218,21 +223,26 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       if (e.key === 'Escape') {
         setIsOpen(false);
       }
+      // Alt+N — open new task modal from anywhere
+      if (e.altKey && e.key.toLowerCase() === 'n' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        openNewTaskModal();
+      }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setIsOpen]);
+    globalThis.addEventListener('keydown', handleKeyDown);
+    return () => globalThis.removeEventListener('keydown', handleKeyDown);
+  }, [setIsOpen, openNewTaskModal]);
 
-  // Navegação com setas
+  // Navegação com setas + Tab + Alt+N atalhos
   useEffect(() => {
     if (!isOpen) return;
     const handleNav = (e: KeyboardEvent) => {
       if (filteredItems.length === 0) return;
-      if (e.key === 'ArrowDown') {
+      if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
         e.preventDefault();
         setSelectedIndex(prev => (prev + 1) % filteredItems.length);
-      } else if (e.key === 'ArrowUp') {
+      } else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
         e.preventDefault();
         setSelectedIndex(prev => (prev - 1 + filteredItems.length) % filteredItems.length);
       } else if (e.key === 'Enter') {
@@ -244,8 +254,28 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
         }
       }
     };
-    window.addEventListener('keydown', handleNav);
-    return () => window.removeEventListener('keydown', handleNav);
+
+    // Alt+1..9 quick navigation
+    const handleAltShortcut = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      const digit = Number.parseInt(e.key, 10);
+      if (digit >= 1 && digit <= 9) {
+        e.preventDefault();
+        const index = digit - 1;
+        if (filteredItems[index]) {
+          filteredItems[index].action();
+          setIsOpen(false);
+          setQuery('');
+        }
+      }
+    };
+
+    globalThis.addEventListener('keydown', handleNav);
+    globalThis.addEventListener('keydown', handleAltShortcut);
+    return () => {
+      globalThis.removeEventListener('keydown', handleNav);
+      globalThis.removeEventListener('keydown', handleAltShortcut);
+    };
   }, [isOpen, filteredItems, selectedIndex, setIsOpen]);
 
   // Reset selected index on query change
@@ -257,7 +287,12 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] px-4">
-      <div className="absolute inset-0 bg-black/35 dark:bg-black/72 backdrop-blur-sm transition-opacity" onClick={() => setIsOpen(false)} />
+      <button
+        type="button"
+        aria-label="Fechar paleta de comandos"
+        className="absolute inset-0 bg-black/35 dark:bg-black/72 backdrop-blur-sm transition-opacity"
+        onClick={() => setIsOpen(false)}
+      />
 
       <div className="app-elevated-panel relative w-full max-w-xl overflow-hidden rounded-[1.35rem] animate-in fade-in zoom-in-95 duration-200">
         <div className="surface-header flex items-center gap-3 px-4 py-3">
@@ -269,11 +304,12 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
+            aria-label="Buscar comandos"
           />
           <div className="app-kbd">ESC</div>
         </div>
 
-        <div className="max-h-[300px] overflow-y-auto py-2">
+        <div className="max-h-[300px] overflow-y-auto py-2" id="command-palette-listbox" aria-label="Resultados">
           {filteredItems.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-slate-500 dark:text-[var(--text-muted)]">
               Nenhum resultado encontrado para "{query}"
@@ -283,7 +319,9 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
               {filteredItems.map((item, index) => (
                 <button
                   key={item.id}
+                  id={`cmd-option-${index}`}
                   type="button"
+                  aria-current={index === selectedIndex}
                   onClick={() => { item.action(); setIsOpen(false); }}
                   className={`mx-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-xl border px-4 py-3 text-left text-sm transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-sky-400/25
                                 ${index === selectedIndex
@@ -301,6 +339,9 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    {index < 9 && (
+                      <span className="app-kbd text-[9px] leading-none">Alt+{index + 1}</span>
+                    )}
                     {item.group && (
                       <span className="rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-[10px] uppercase text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-[var(--text-muted)]">{item.group}</span>
                     )}
@@ -312,8 +353,14 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
           )}
         </div>
 
+        <div className="sr-only" aria-live="polite" aria-atomic="true">
+          {filteredItems.length === 0
+            ? 'Nenhum resultado encontrado.'
+            : `${filteredItems.length} resultado(s) encontrado(s).`}
+        </div>
+
         <div className="surface-header flex justify-between px-4 py-2 text-[10px] text-slate-400 dark:text-[var(--text-muted)]">
-          <span>Use as setas para navegar</span>
+          <span>↑↓ ou Tab para navegar · Alt+1-9 atalho · Enter para executar</span>
           <span>DevFlow Intelligence</span>
         </div>
       </div>

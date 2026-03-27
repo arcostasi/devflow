@@ -90,6 +90,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, setView }) => {
                   key={item.id}
                   onClick={() => setView(item.id)}
                   title={isCollapsed ? item.label : undefined}
+                  aria-current={isActive ? 'page' : undefined}
                   className={`app-nav-item w-full ${isCollapsed ? 'justify-center px-3' : 'px-4'} ${isActive ? 'app-nav-item-active' : ''} group`}
                 >
                   <item.icon className={`w-5 h-5 flex-shrink-0 ${isActive ? 'text-slate-700 dark:text-[var(--text-primary)]' : 'text-slate-500 dark:text-[var(--text-muted)] group-hover:text-slate-700 dark:group-hover:text-[var(--text-primary)]'}`} />

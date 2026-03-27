@@ -1,6 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Bell, Search, Sun, Moon, Plus, Check, MessageSquare, AlertTriangle, LogOut } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Bell, Search, Sun, Moon, Plus, MessageSquare, AlertTriangle, LogOut, GitCommit, Rocket, Boxes, FolderGit2, GitPullRequest } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { api } from '../services/api';
+import { Notification } from '../types';
 import Avatar from './Avatar';
 import DevFlowLogo from './DevFlowLogo';
 
@@ -13,20 +15,41 @@ interface HeaderProps {
 }
 
 const getNotificationTypeClass = (type: string): string => {
-  if (type === 'ci') return 'bg-red-100 text-red-500 dark:bg-red-900/30';
-  if (type === 'mention') return 'bg-blue-100 text-blue-500 dark:bg-blue-900/30';
-  return 'bg-purple-100 text-purple-500 dark:bg-purple-900/30';
+  if (type === 'deploy') return 'bg-emerald-100 text-emerald-500 dark:bg-emerald-900/30';
+  if (type === 'commit') return 'bg-blue-100 text-blue-500 dark:bg-blue-900/30';
+  if (type === 'pr') return 'bg-purple-100 text-purple-500 dark:bg-purple-900/30';
+  if (type === 'task') return 'bg-orange-100 text-orange-500 dark:bg-orange-900/30';
+  if (type === 'sprint') return 'bg-violet-100 text-violet-500 dark:bg-violet-900/30';
+  return 'bg-slate-100 text-slate-500 dark:bg-slate-800/30';
 };
 
 const getNotificationIcon = (type: string): React.ReactNode => {
-  if (type === 'ci') return <AlertTriangle className="w-4 h-4" />;
-  if (type === 'mention') return <MessageSquare className="w-4 h-4" />;
-  return <Check className="w-4 h-4" />;
+  if (type === 'deploy') return <Rocket className="w-4 h-4" />;
+  if (type === 'commit') return <GitCommit className="w-4 h-4" />;
+  if (type === 'pr') return <GitPullRequest className="w-4 h-4" />;
+  if (type === 'task') return <AlertTriangle className="w-4 h-4" />;
+  if (type === 'sprint') return <Boxes className="w-4 h-4" />;
+  if (type === 'repo') return <FolderGit2 className="w-4 h-4" />;
+  return <MessageSquare className="w-4 h-4" />;
+};
+
+const formatTimeAgo = (dateStr: string): string => {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return 'agora';
+  if (minutes < 60) return `${minutes}min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
 };
 
 const Header: React.FC<HeaderProps> = ({ isDark, toggleTheme, title, onOpenCommandPalette, onOpenNewTask }) => {
   const { user, logout } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
 
   // Close notifications when clicking outside
@@ -40,8 +63,49 @@ const Header: React.FC<HeaderProps> = ({ isDark, toggleTheme, title, onOpenComma
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Empty notifications - will be populated from API in the future
-  const notifications: { id: number; type: string; text: string; time: string; read: boolean }[] = [];
+  const fetchNotifications = useCallback(async () => {
+    setLoadingNotifications(true);
+    try {
+      const data = await api.getNotifications({ limit: 20 });
+      setNotifications(data.items);
+      setUnreadCount(data.unreadCount);
+    } catch {
+      // Silently fail — notifications are non-critical
+    } finally {
+      setLoadingNotifications(false);
+    }
+  }, []);
+
+  // Initial fetch + poll every 30s
+  useEffect(() => {
+    if (!user) return;
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30_000);
+    return () => clearInterval(interval);
+  }, [user, fetchNotifications]);
+
+  // Refresh when dropdown opens
+  useEffect(() => {
+    if (showNotifications) fetchNotifications();
+  }, [showNotifications, fetchNotifications]);
+
+  const handleMarkAllRead = async () => {
+    try {
+      await api.markAllNotificationsRead();
+      setNotifications(prev => prev.map(n => ({ ...n, read: 1 })));
+      setUnreadCount(0);
+    } catch { /* ignore */ }
+  };
+
+  const handleNotificationClick = async (notif: Notification) => {
+    if (!notif.read) {
+      try {
+        await api.markNotificationRead(notif.id);
+        setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: 1 } : n));
+        setUnreadCount(prev => Math.max(0, prev - 1));
+      } catch { /* ignore */ }
+    }
+  };
 
   return (
     <header className="app-header-bar z-30 relative select-none">
@@ -83,10 +147,12 @@ const Header: React.FC<HeaderProps> = ({ isDark, toggleTheme, title, onOpenComma
           <div className="relative" ref={notifRef}>
             <button
               onClick={() => setShowNotifications(!showNotifications)}
+              aria-expanded={showNotifications}
+              aria-haspopup="true"
               className={`app-icon-button relative ${showNotifications ? 'border-slate-200/80 bg-slate-50/90 text-slate-700 shadow-sm shadow-slate-200/50 dark:border-[var(--border-soft)] dark:bg-white/[0.05] dark:text-[var(--text-primary)] dark:shadow-none' : ''}`}
             >
               <Bell className="w-5 h-5" />
-              {notifications.some(n => !n.read) && (
+              {unreadCount > 0 && (
                 <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white dark:border-[#141821]"></span>
               )}
             </button>
@@ -95,32 +161,54 @@ const Header: React.FC<HeaderProps> = ({ isDark, toggleTheme, title, onOpenComma
             {showNotifications && (
               <div className="app-flyout absolute right-0 mt-2 w-80 rounded-2xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-100">
                 <div className="flex items-center justify-between border-b border-slate-200/50 bg-slate-50/70 p-3 dark:border-[var(--border-soft)] dark:bg-white/[0.03]">
-                  <h3 className="font-semibold text-sm text-slate-800 dark:text-[var(--text-primary)]">Notificações</h3>
-                  <button className="text-xs text-primary-600 dark:text-primary-300 hover:underline">Marcar lidas</button>
+                  <h3 className="font-semibold text-sm text-slate-800 dark:text-[var(--text-primary)]">
+                    Notificações
+                    {unreadCount > 0 && <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">{unreadCount}</span>}
+                  </h3>
+                  {unreadCount > 0 && (
+                    <button onClick={handleMarkAllRead} className="text-xs text-primary-600 dark:text-primary-300 hover:underline">Marcar lidas</button>
+                  )}
                 </div>
                 <div className="max-h-80 overflow-y-auto">
-                  {notifications.length === 0 ? (
+                  {loadingNotifications && notifications.length === 0 ? (
+                    <div className="space-y-1 p-2">
+                      {Array.from({ length: 3 }).map((_, i) => (
+                        <div key={`notif-skel-${i}`} className="flex gap-3 p-3">
+                          <div className="h-8 w-8 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                          <div className="flex-1 space-y-2">
+                            <div className="h-3.5 w-3/4 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                            <div className="h-3 w-1/2 animate-pulse rounded-full bg-slate-200/80 dark:bg-white/[0.08]" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : notifications.length === 0 ? (
                     <div className="p-8 text-center text-slate-400 text-sm dark:text-[var(--text-muted)]">
                       <Bell className="w-8 h-8 mx-auto mb-2 opacity-30" />
                       Nenhuma notificação
                     </div>
                   ) : notifications.map(notif => (
-                    <div key={notif.id} className={`p-3 border-b border-slate-100 dark:border-slate-800/80 last:border-0 hover:bg-slate-50 dark:hover:bg-white/[0.04] cursor-pointer flex gap-3 ${notif.read ? '' : 'bg-blue-50/30 dark:bg-blue-900/10'}`}>
+                    <button
+                      type="button"
+                      key={notif.id}
+                      onClick={() => handleNotificationClick(notif)}
+                      className={`w-full text-left p-3 border-b border-slate-100 dark:border-slate-800/80 last:border-0 hover:bg-slate-50 dark:hover:bg-white/[0.04] cursor-pointer flex gap-3 ${notif.read ? '' : 'bg-blue-50/30 dark:bg-blue-900/10'}`}
+                    >
                       <div className={`mt-1 flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${getNotificationTypeClass(notif.type)}`}>
                         {getNotificationIcon(notif.type)}
                       </div>
-                      <div className="flex-1">
-                        <p className={`text-sm ${notif.read ? 'text-slate-600 dark:text-slate-400' : 'font-medium text-slate-800 dark:text-slate-100'}`}>
-                          {notif.text}
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm truncate ${notif.read ? 'text-slate-600 dark:text-slate-400' : 'font-medium text-slate-800 dark:text-slate-100'}`}>
+                          {notif.title}
                         </p>
-                        <p className="text-xs text-slate-400 mt-1 dark:text-[var(--text-muted)]">{notif.time} atrás</p>
+                        {notif.body && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">{notif.body}</p>
+                        )}
+                        <p className="text-xs text-slate-400 mt-1 dark:text-[var(--text-muted)]">{formatTimeAgo(notif.createdAt)}</p>
                       </div>
-                      {!notif.read && <div className="w-2 h-2 rounded-full bg-primary-500 mt-2"></div>}
-                    </div>
+                      {!notif.read && <div className="w-2 h-2 rounded-full bg-primary-500 mt-2 flex-shrink-0" />}
+                    </button>
                   ))}
-                </div>
-                <div className="p-2 text-center border-t border-slate-200 bg-slate-50 dark:border-[var(--border-soft)] dark:bg-white/[0.03]">
-                  <button className="text-xs font-medium text-slate-500 hover:text-slate-800 dark:text-[var(--text-muted)] dark:hover:text-[var(--text-primary)]">Ver todas</button>
                 </div>
               </div>
             )}

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { getErrorMessage } from '../types';
 
 interface User {
     id: string;
@@ -7,7 +8,11 @@ interface User {
     avatar?: string;
     role: 'admin' | 'user';
     groups?: { id: string; name: string; permissions?: string[] }[];
-    preferences?: any;
+    preferences?: {
+        bio?: string;
+        notifications?: Record<string, boolean>;
+        [key: string]: unknown;
+    };
 }
 
 interface AuthContextType {
@@ -82,6 +87,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
             if (res.ok) {
                 localStorage.setItem('devflow_token', data.token);
+                if (data.refreshToken) localStorage.setItem('devflow_refresh_token', data.refreshToken);
                 setToken(data.token);
                 setUser(data.user);
                 return { success: true };
@@ -110,6 +116,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
                 if (data.token) {
                     localStorage.setItem('devflow_token', data.token);
+                    if (data.refreshToken) localStorage.setItem('devflow_refresh_token', data.refreshToken);
                     setToken(data.token);
                     setUser(data.user);
                 }
@@ -124,6 +131,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const logout = () => {
         localStorage.removeItem('devflow_token');
+        localStorage.removeItem('devflow_refresh_token');
         setToken(null);
         setUser(null);
     };
@@ -146,9 +154,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             } else {
                 return { success: false, error: result.error || 'Erro ao atualizar perfil' };
             }
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error(err);
-            return { success: false, error: `Erro de conexão: ${err.message}` };
+            return { success: false, error: `Erro de conexão: ${getErrorMessage(err)}` };
         }
     };
 
