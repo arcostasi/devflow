@@ -74,7 +74,7 @@ const getActivityMetaLabel = (log: ActivityLog) => {
   return trimmedMeta;
 };
 
-const ContributionGraph: React.FC<{ data?: Record<string, number> }> = ({ data = {} }) => {
+const ContributionGraph: React.FC<{ data?: Record<string, number> }> = React.memo(({ data = {} }) => {
   const weeks = 52;
   const days = 7;
 
@@ -152,7 +152,7 @@ const ContributionGraph: React.FC<{ data?: Record<string, number> }> = ({ data =
       </div>
     </div>
   );
-};
+});
 
 const getRepoActionLabel = (targetType: ActivityLog['targetType']) => (
   targetType === 'commit' ? 'Abrir commits' : 'Abrir repositório'
@@ -170,7 +170,7 @@ const ActivityItem: React.FC<{
   onOpenRepoInGit: (id: string, tab?: GitIntegrationTab) => void;
   onOpenEnvironment: (environmentId: string, repoId?: string | null) => void;
   onNavigate: (view: ViewState) => void;
-}> = ({ log, task, repo, onOpenTask, onOpenRepo, onOpenRepoInGit, onOpenEnvironment, onNavigate }) => {
+}> = React.memo(({ log, task, repo, onOpenTask, onOpenRepo, onOpenRepoInGit, onOpenEnvironment, onNavigate }) => {
   const getIcon = () => {
     switch (log.targetType) {
       case 'pr': return <GitPullRequest className="w-4 h-4 text-purple-600 dark:text-purple-400" />;
@@ -304,7 +304,7 @@ const ActivityItem: React.FC<{
       <div className="mt-1 opacity-70 group-hover:opacity-100 transition-opacity">{getIcon()}</div>
     </div>
   );
-};
+});
 
 interface MetricCardProps {
   title: string;
@@ -402,16 +402,10 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
     () => new Map(repositories.map(repo => [repo.name.trim().toLocaleLowerCase('pt-BR'), repo])),
     [repositories]
   );
-  const firstOpenTask = useMemo(() => tasks.find((task) => task.status !== 'done'), [tasks]);
-  const firstReviewTask = useMemo(() => tasks.find((task) => task.status === 'review'), [tasks]);
   const firstReadyTask = useMemo(() => tasks.find((task) => task.status === 'ready'), [tasks]);
-  const commitFocusRepo = useMemo(() => {
-    const sortable = [...repositories];
-    sortable.sort((left, right) => new Date(right.lastUpdated).getTime() - new Date(left.lastUpdated).getTime());
-    return sortable[0];
-  }, [repositories]);
 
   const [showFailedPanel, setShowFailedPanel] = useState(false);
+  const [visibleActivityCount, setVisibleActivityCount] = useState(5);
 
   const getRelatedRepoFromLog = (log: ActivityLog) => {
     const parsed = parseActivityMeta(log.meta);
@@ -660,7 +654,7 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
                   </div>
                 </div>
               ))
-            ) : activities.slice(0, 5).map(log => (
+            ) : activities.slice(0, visibleActivityCount).map(log => (
               <ActivityItem
                 key={log.id}
                 log={log}
@@ -677,6 +671,15 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
             ))}
             {!isLoading && activities.length === 0 && (
               <div className="surface-empty rounded-2xl bg-slate-50/55 py-12 text-center text-sm text-slate-400 dark:bg-transparent dark:text-[var(--text-muted)]">Nenhuma atividade recente.</div>
+            )}
+            {!isLoading && activities.length > visibleActivityCount && (
+              <button
+                type="button"
+                onClick={() => setVisibleActivityCount(prev => prev + 10)}
+                className="w-full mt-2 rounded-xl border border-slate-200/70 bg-slate-50/72 py-2.5 text-sm font-medium text-primary-600 shadow-sm shadow-slate-200/45 transition-all hover:border-primary-500/30 hover:bg-blue-50/70 dark:border-white/10 dark:bg-white/[0.02] dark:text-primary-300 dark:hover:bg-white/[0.04] dark:shadow-none"
+              >
+                Carregar mais atividades
+              </button>
             )}
           </div>
         </div>
@@ -721,7 +724,7 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, repositories, activities, 
             ) : (
               <>
                 {displayedRepos.map(repo => {
-                  const isBroken = (repo as any).pathMissing || failedRepoDetails.some(f => f.id === repo.id);
+                  const isBroken = repo.pathMissing || failedRepoDetails.some(f => f.id === repo.id);
                   return (
                     <article
                       key={repo.id}

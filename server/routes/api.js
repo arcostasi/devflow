@@ -3,10 +3,53 @@ import db from '../db.js';
 import { execFile, execFileSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { requireAuth, requireAdmin, requirePermission } from '../middleware/auth.js';
 import bcrypt from 'bcryptjs';
+import { createTaskSchema, updateTaskSchema, createSprintSchema, updateSprintSchema, createRepoSchema, validate } from '../validation.js';
+import { uid, sendError } from '../utils.js';
 
 const router = express.Router();
+
+// --- Input Sanitization Helpers for Git operations ---
+
+/** Validate a Git ref name (branch, tag, remote). Rejects traversal and control chars. */
+const isValidGitRef = (ref) => {
+    if (!ref || typeof ref !== 'string') return false;
+    // Git ref rules: no space, ~, ^, :, ?, *, [, \, .., @{, trailing dot/slash, ASCII control
+    return /^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$/.test(ref)
+        && !ref.includes('..')
+        && !ref.includes('@{')
+        && !ref.endsWith('.')
+        && !ref.endsWith('/')
+        && ref.length <= 255;
+};
+
+/** Validate a remote name. Very restrictive (alphanumeric + hyphens). */
+const isValidRemoteName = (name) => {
+    if (!name || typeof name !== 'string') return false;
+    return /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name) && name.length <= 64;
+};
+
+/** Validate file paths passed to git commands. Blocks traversal and null bytes. */
+const isValidGitFilePath = (filePath) => {
+    if (!filePath || typeof filePath !== 'string') return false;
+    // Block null bytes and absolute paths
+    if (filePath.includes('\0')) return false;
+    // Normalize and check for traversal outside repo root
+    const normalized = path.normalize(filePath);
+    if (path.isAbsolute(normalized)) return false;
+    if (normalized.startsWith('..')) return false;
+    return true;
+};
+
+/** Validate a remote URL (basic format check). */
+const isValidRemoteUrl = (url) => {
+    if (!url || typeof url !== 'string') return false;
+    if (url.includes('\0')) return false;
+    // Allow https://, git://, ssh://, git@host: patterns
+    return /^(https?:\/\/|git:\/\/|ssh:\/\/|git@[\w.-]+:).+$/.test(url) && url.length <= 2048;
+};
+
 // Helper para executar Git em um diretório específico
 const runGitInDir = (args, cwd) => {
     return new Promise((resolve, reject) => {
@@ -41,11 +84,69 @@ const taskStatusLabels = {
     done: 'Concluido',
 };
 
-const createActivityLog = ({ userId, action, target, targetType, taskId = null, meta = null }) => {
-    db.prepare(`
-        INSERT INTO activities (id, userId, action, target, targetType, taskId, timestamp, meta)
+const collectNotifyTargets = (userId, taskId, targetType, parsedMeta) => {
+    const targets = new Set();
+
+    try {
+        if (taskId) {
+            const task = db.prepare('SELECT assigneeId, pairAssigneeId FROM tasks WHERE id = ?').get(taskId);
+            if (task?.assigneeId && task.assigneeId !== userId) targets.add(task.assigneeId);
+            if (task?.pairAssigneeId && task.pairAssigneeId !== userId) targets.add(task.pairAssigneeId);
+        }
+
+        if (parsedMeta?.repoId && ['commit', 'environment'].includes(targetType)) {
+            const recentAuthors = db.prepare(`
+                SELECT DISTINCT userId FROM activities
+                WHERE meta LIKE ? AND userId != ? AND timestamp > datetime('now', '-30 days')
+            `).all(`%"repoId":"${parsedMeta.repoId}"%`, userId);
+            for (const row of recentAuthors) targets.add(row.userId);
+        }
+    } catch {
+        // Best-effort: don't block activity logging if notify target lookup fails
+    }
+
+    return targets;
+};
+
+const generateNotifications = ({ userId, action, target, targetType, taskId, meta, timestamp }) => {
+    const parsedMeta = meta ? (() => { try { return JSON.parse(meta); } catch { return null; } })() : null;
+    const notifyUserIds = collectNotifyTargets(userId, taskId, targetType, parsedMeta);
+    if (notifyUserIds.size === 0) return;
+
+    const notifTypeMap = { issue: 'task', commit: 'commit', pr: 'pr', sprint: 'sprint', environment: 'deploy', repo: 'repo' };
+    const notifType = notifTypeMap[targetType] || 'activity';
+    const actor = db.prepare('SELECT name FROM users WHERE id = ?').get(userId);
+    const title = `${actor?.name || 'Alguém'} ${action}`;
+
+    const insertNotif = db.prepare(`
+        INSERT INTO notifications (id, userId, type, title, body, relatedType, relatedId, createdAt)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(`a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, userId, action, target, targetType, taskId, new Date().toISOString(), meta);
+    `);
+    for (const recipientId of notifyUserIds) {
+        insertNotif.run(
+            uid('n'),
+            recipientId, notifType, title, target, targetType, taskId || parsedMeta?.repoId || null, timestamp
+        );
+    }
+};
+
+const createActivityLog = ({ userId, action, target, targetType, taskId = null, meta = null }) => {
+    const timestamp = new Date().toISOString();
+    try {
+        db.prepare(`
+            INSERT INTO activities (id, userId, action, target, targetType, taskId, timestamp, meta)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(uid('a'), userId, action, target, targetType, taskId, timestamp, meta);
+    } catch {
+        // Activity logging should never crash the request
+        return;
+    }
+
+    try {
+        generateNotifications({ userId, action, target, targetType, taskId, meta, timestamp });
+    } catch {
+        // Notification generation should never block activity logging
+    }
 };
 
 const summarizeComment = (text) => {
@@ -61,10 +162,10 @@ router.get('/repos/:id/git/status', requireAuth, async (req, res) => {
     try {
         const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(id);
         if (!repo) {
-            return res.status(404).json({ error: 'Repositório não encontrado' });
+            return sendError(res, 404, 'Repositório não encontrado');
         }
         if (!repo.localPath || !fs.existsSync(repo.localPath)) {
-            return res.status(404).json({ error: 'Diretório do repositório não encontrado' });
+            return sendError(res, 404, 'Diretório do repositório não encontrado');
         }
 
         const statusOutput = await runGitInDir(['status', '--porcelain'], repo.localPath);
@@ -91,7 +192,7 @@ router.get('/repos/:id/git/status', requireAuth, async (req, res) => {
             localPath: repo.localPath
         });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao obter status Git', details: err });
+        sendError(res, 500, 'Falha ao obter status Git', err);
     }
 });
 
@@ -101,16 +202,19 @@ router.get('/repos/:id/git/diff', requireAuth, async (req, res) => {
     const { file, staged } = req.query;
 
     if (!file) {
-        return res.status(400).json({ error: 'Arquivo não especificado' });
+        return sendError(res, 400, 'Arquivo não especificado');
+    }
+    if (!isValidGitFilePath(file)) {
+        return sendError(res, 400, 'Caminho de arquivo inválido');
     }
 
     try {
         const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(id);
         if (!repo) {
-            return res.status(404).json({ error: 'Repositório não encontrado' });
+            return sendError(res, 404, 'Repositório não encontrado');
         }
         if (!repo.localPath || !fs.existsSync(repo.localPath)) {
-            return res.status(404).json({ error: 'Diretório do repositório não encontrado' });
+            return sendError(res, 404, 'Diretório do repositório não encontrado');
         }
 
         // Verificar status do arquivo para saber se é Untracked
@@ -150,7 +254,7 @@ router.get('/repos/:id/git/diff', requireAuth, async (req, res) => {
 
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Falha ao obter diff', details: err });
+        sendError(res, 500, 'Falha ao obter diff', err);
     }
 });
 
@@ -214,7 +318,7 @@ router.get('/dashboard/stats', requireAuth, async (req, res) => {
         res.json(stats);
     } catch (err) {
         console.error('Failed to generate dashboard stats:', err);
-        res.status(500).json({ error: 'Falha ao gerar estatísticas', details: err.message });
+        sendError(res, 500, 'Falha ao gerar estatísticas', err.message);
     }
 });
 
@@ -224,10 +328,10 @@ router.get('/repos/:id/git/branches', requireAuth, async (req, res) => {
     try {
         const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(id);
         if (!repo) {
-            return res.status(404).json({ error: 'Repositório não encontrado' });
+            return sendError(res, 404, 'Repositório não encontrado');
         }
         if (!repo.localPath || !fs.existsSync(repo.localPath)) {
-            return res.status(404).json({ error: 'Diretório do repositório não encontrado' });
+            return sendError(res, 404, 'Diretório do repositório não encontrado');
         }
 
         const branchOutput = await runGitInDir(['branch'], repo.localPath);
@@ -242,57 +346,63 @@ router.get('/repos/:id/git/branches', requireAuth, async (req, res) => {
             currentBranch: currentBranchOutput || 'main'
         });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao listar branches', details: err });
+        sendError(res, 500, 'Falha ao listar branches', err);
     }
 });
 
 // Helper: validar que o repo existe e tem localPath
 const getRepoOrError = (id, res) => {
     const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(id);
-    if (!repo) { res.status(404).json({ error: 'Repositório não encontrado' }); return null; }
+    if (!repo) { sendError(res, 404, 'Repositório não encontrado'); return null; }
     if (!repo.localPath || !fs.existsSync(repo.localPath)) {
-        res.status(404).json({ error: 'Diretório do repositório não encontrado', path: repo.localPath });
+        sendError(res, 404, 'Diretório do repositório não encontrado');
         return null;
     }
     return repo;
 };
 
 // Stage arquivos específicos (git add <file> ...)
-router.post('/repos/:id/git/stage', requireAuth, async (req, res) => {
+router.post('/repos/:id/git/stage', requireAuth, requirePermission('git:write'), async (req, res) => {
     const { id } = req.params;
     const { files } = req.body; // array of file paths
     try {
         const repo = getRepoOrError(id, res);
         if (!repo) return;
         if (!files || files.length === 0) {
-            return res.status(400).json({ error: 'Nenhum arquivo especificado' });
+            return sendError(res, 400, 'Nenhum arquivo especificado');
+        }
+        if (!Array.isArray(files) || files.some(f => !isValidGitFilePath(f))) {
+            return sendError(res, 400, 'Caminhos de arquivo inválidos');
         }
         await runGitInDir(['add', '--', ...files], repo.localPath);
         res.json({ success: true, message: `${files.length} arquivo(s) adicionado(s) ao stage` });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao adicionar arquivos ao stage', details: err });
+        sendError(res, 500, 'Falha ao adicionar arquivos ao stage', err);
     }
 });
 
 // Unstage arquivos específicos (git restore --staged <file> ...)
-router.post('/repos/:id/git/unstage', requireAuth, async (req, res) => {
+router.post('/repos/:id/git/unstage', requireAuth, requirePermission('git:write'), async (req, res) => {
     const { id } = req.params;
     const { files } = req.body;
     try {
         const repo = getRepoOrError(id, res);
         if (!repo) return;
         if (!files || files.length === 0) {
-            return res.status(400).json({ error: 'Nenhum arquivo especificado' });
+            return sendError(res, 400, 'Nenhum arquivo especificado');
+        }
+        if (!Array.isArray(files) || files.some(f => !isValidGitFilePath(f))) {
+            return sendError(res, 400, 'Caminhos de arquivo inválidos');
         }
         await runGitInDir(['restore', '--staged', '--', ...files], repo.localPath);
         res.json({ success: true, message: `${files.length} arquivo(s) removido(s) do stage` });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao remover arquivos do stage', details: err });
+        sendError(res, 500, 'Falha ao remover arquivos do stage', err);
     }
 });
 
 // Commit em um repositório específico (usa apenas arquivos já staged)
-router.post('/repos/:id/git/commit', requireAuth, async (req, res) => {
+router.post('/repos/:id/git/commit', requireAuth, requirePermission('git:write'), async (req, res) => {
     const { id } = req.params;
     const { message, files } = req.body;
     // files: optional array — if provided, stage them first; otherwise commit what's already staged
@@ -301,11 +411,14 @@ router.post('/repos/:id/git/commit', requireAuth, async (req, res) => {
         if (!repo) return;
 
         if (!message || !message.trim()) {
-            return res.status(400).json({ error: 'Mensagem de commit é obrigatória' });
+            return sendError(res, 400, 'Mensagem de commit é obrigatória');
         }
 
-        // If files array provided, stage them explicitly; otherwise use what's already staged
+        // If files array provided, validate and stage them explicitly; otherwise use what's already staged
         if (files && files.length > 0) {
+            if (!Array.isArray(files) || files.some(f => !isValidGitFilePath(f))) {
+                return sendError(res, 400, 'Caminhos de arquivo inválidos');
+            }
             await runGitInDir(['add', '--', ...files], repo.localPath);
         }
 
@@ -320,20 +433,23 @@ router.post('/repos/:id/git/commit', requireAuth, async (req, res) => {
         const errMsg = err.stderr || err.error || String(err);
         // Detect "nothing to commit"
         if (errMsg.includes('nothing to commit') || errMsg.includes('nothing added to commit')) {
-            return res.status(400).json({ error: 'Nada para commitar. Adicione arquivos ao stage primeiro.' });
+            return sendError(res, 400, 'Nada para commitar. Adicione arquivos ao stage primeiro.');
         }
-        res.status(500).json({ error: 'Falha ao realizar commit', details: errMsg });
+        sendError(res, 500, 'Falha ao realizar commit', errMsg);
     }
 });
 
 // Push para o remote
-router.post('/repos/:id/git/push', requireAuth, async (req, res) => {
+router.post('/repos/:id/git/push', requireAuth, requirePermission('git:write'), async (req, res) => {
     const { id } = req.params;
     const { remote = 'origin', branch } = req.body;
     try {
         const repo = getRepoOrError(id, res);
         if (!repo) return;
 
+        if (!isValidRemoteName(remote)) {
+            return sendError(res, 400, 'Nome de remote inválido');
+        }
         // Get current branch if not specified
         let targetBranch = branch;
         if (!targetBranch) {
@@ -341,7 +457,10 @@ router.post('/repos/:id/git/push', requireAuth, async (req, res) => {
         }
 
         if (!targetBranch) {
-            return res.status(400).json({ error: 'Não foi possível determinar o branch atual' });
+            return sendError(res, 400, 'Não foi possível determinar o branch atual');
+        }
+        if (!isValidGitRef(targetBranch)) {
+            return sendError(res, 400, 'Nome de branch inválido');
         }
 
         await runGitInDir(['push', remote, targetBranch], repo.localPath);
@@ -351,62 +470,68 @@ router.post('/repos/:id/git/push', requireAuth, async (req, res) => {
         const errMsg = err.stderr || err.error || String(err);
         // Provide helpful error messages
         if (errMsg.includes('No configured push destination') || errMsg.includes('no upstream')) {
-            return res.status(400).json({
-                error: 'Nenhum remote configurado. Configure a URL do remote nas configurações do repositório.',
-                details: errMsg
-            });
+            return sendError(res, 400, 'Nenhum remote configurado. Configure a URL do remote nas configurações do repositório.', errMsg);
         }
         if (errMsg.includes('Authentication failed') || errMsg.includes('could not read Username')) {
-            return res.status(401).json({ error: 'Falha de autenticação no remote Git.', details: errMsg });
+            return sendError(res, 401, 'Falha de autenticação no remote Git.', errMsg);
         }
-        res.status(500).json({ error: 'Falha ao realizar push', details: errMsg });
+        sendError(res, 500, 'Falha ao realizar push', errMsg);
     }
 });
 
 // Pull do remote
-router.post('/repos/:id/git/pull', requireAuth, async (req, res) => {
+router.post('/repos/:id/git/pull', requireAuth, requirePermission('git:write'), async (req, res) => {
     const { id } = req.params;
     const { remote = 'origin', branch } = req.body;
     try {
         const repo = getRepoOrError(id, res);
         if (!repo) return;
 
+        if (!isValidRemoteName(remote)) {
+            return sendError(res, 400, 'Nome de remote inválido');
+        }
         const args = ['pull', remote];
-        if (branch) args.push(branch);
+        if (branch) {
+            if (!isValidGitRef(branch)) {
+                return sendError(res, 400, 'Nome de branch inválido');
+            }
+            args.push(branch);
+        }
 
         const output = await runGitInDir(args, repo.localPath);
         res.json({ success: true, message: output || 'Pull realizado com sucesso' });
     } catch (err) {
         const errMsg = err.stderr || err.error || String(err);
-        res.status(500).json({ error: 'Falha ao realizar pull', details: errMsg });
+        sendError(res, 500, 'Falha ao realizar pull', errMsg);
     }
 });
 
 // Checkout de branch existente
-router.post('/repos/:id/git/checkout', requireAuth, async (req, res) => {
+router.post('/repos/:id/git/checkout', requireAuth, requirePermission('git:write'), async (req, res) => {
     const { id } = req.params;
     const { branch } = req.body;
     try {
         const repo = getRepoOrError(id, res);
         if (!repo) return;
-        if (!branch) return res.status(400).json({ error: 'Branch não especificado' });
+        if (!branch) return sendError(res, 400, 'Branch não especificado');
+        if (!isValidGitRef(branch)) return sendError(res, 400, 'Nome de branch inválido');
 
         await runGitInDir(['checkout', branch], repo.localPath);
         res.json({ success: true, message: `Checkout realizado para ${branch}` });
     } catch (err) {
         const errMsg = err.stderr || err.error || String(err);
-        res.status(500).json({ error: 'Falha ao realizar checkout', details: errMsg });
+        sendError(res, 500, 'Falha ao realizar checkout', errMsg);
     }
 });
 
 // Criar novo branch (e fazer checkout)
-router.post('/repos/:id/git/branch', requireAuth, async (req, res) => {
+router.post('/repos/:id/git/branch', requireAuth, requirePermission('git:write'), async (req, res) => {
     const { id } = req.params;
     const { name, checkout = true } = req.body;
     try {
         const repo = getRepoOrError(id, res);
         if (!repo) return;
-        if (!name || !name.trim()) return res.status(400).json({ error: 'Nome do branch é obrigatório' });
+        if (!name || !name.trim()) return sendError(res, 400, 'Nome do branch é obrigatório');
 
         // Sanitize branch name
         const safeName = name.trim().replace(/[^a-zA-Z0-9/_\-.]/g, '-');
@@ -421,20 +546,22 @@ router.post('/repos/:id/git/branch', requireAuth, async (req, res) => {
     } catch (err) {
         const errMsg = err.stderr || err.error || String(err);
         if (errMsg.includes('already exists')) {
-            return res.status(409).json({ error: `Branch já existe`, details: errMsg });
+            return sendError(res, 409, `Branch já existe`, errMsg);
         }
-        res.status(500).json({ error: 'Falha ao criar branch', details: errMsg });
+        sendError(res, 500, 'Falha ao criar branch', errMsg);
     }
 });
 
 // Configurar remote URL do repositório
-router.put('/repos/:id/git/remote', requireAuth, async (req, res) => {
+router.put('/repos/:id/git/remote', requireAuth, requirePermission('git:write'), async (req, res) => {
     const { id } = req.params;
     const { url, remote = 'origin' } = req.body;
     try {
         const repo = getRepoOrError(id, res);
         if (!repo) return;
-        if (!url) return res.status(400).json({ error: 'URL do remote é obrigatória' });
+        if (!url) return sendError(res, 400, 'URL do remote é obrigatória');
+        if (!isValidRemoteName(remote)) return sendError(res, 400, 'Nome de remote inválido');
+        if (!isValidRemoteUrl(url)) return sendError(res, 400, 'URL de remote inválida. Use https://, git://, ssh:// ou git@host:');
 
         // Check if remote exists
         try {
@@ -452,7 +579,7 @@ router.put('/repos/:id/git/remote', requireAuth, async (req, res) => {
         res.json({ success: true, message: `Remote "${remote}" configurado para ${url}` });
     } catch (err) {
         const errMsg = err.stderr || err.error || String(err);
-        res.status(500).json({ error: 'Falha ao configurar remote', details: errMsg });
+        sendError(res, 500, 'Falha ao configurar remote', errMsg);
     }
 });
 
@@ -464,14 +591,31 @@ router.get('/repos/:id/git/log', requireAuth, async (req, res) => {
         const repo = getRepoOrError(id, res);
         if (!repo) return;
 
+        const safeLimit = Math.max(1, Math.min(Number.parseInt(limit, 10) || 30, 500));
+        const safeSkip = Math.max(0, Number.parseInt(skip, 10) || 0);
+
         const args = [
             'log',
-            `--max-count=${limit}`,
-            `--skip=${skip}`,
+            `--max-count=${safeLimit}`,
+            `--skip=${safeSkip}`,
             '--format=%H|%h|%an|%ae|%ai|%s',
         ];
-        if (branch) args.push(branch);
-        if (author) args.push(`--author=${author}`);
+        if (branch) {
+            if (!isValidGitRef(branch)) return sendError(res, 400, 'Nome de branch inválido');
+            args.push(branch);
+        }
+        if (author) {
+            // Sanitize author: strip control chars and limit length
+            const safeAuthor = String(author)
+                .split('')
+                .filter((char) => {
+                    const code = char.charCodeAt(0);
+                    return code >= 32 && code !== 127;
+                })
+                .join('')
+                .slice(0, 128);
+            if (safeAuthor) args.push(`--author=${safeAuthor}`);
+        }
 
         const output = await runGitInDir(args, repo.localPath);
 
@@ -495,7 +639,7 @@ router.get('/repos/:id/git/log', requireAuth, async (req, res) => {
         if (errMsg.includes('does not have any commits')) {
             return res.json({ commits: [], total: 0, limit: Number(limit), skip: Number(skip) });
         }
-        res.status(500).json({ error: 'Falha ao obter log do Git', details: errMsg });
+        sendError(res, 500, 'Falha ao obter log do Git', errMsg);
     }
 });
 
@@ -533,12 +677,17 @@ router.get('/settings/public', (req, res) => {
 // ACTIVITIES
 router.get('/activities', requireAuth, (req, res) => {
     try {
+        const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 50, 1), 200);
+        const skip = Math.max(Number.parseInt(req.query.skip, 10) || 0, 0);
+
+        const total = db.prepare('SELECT COUNT(*) as count FROM activities').get().count;
         const activities = db.prepare(`
             SELECT a.*, u.id as user_id, u.name as user_name, u.avatar as user_avatar
             FROM activities a
             LEFT JOIN users u ON a.userId = u.id
             ORDER BY timestamp DESC
-        `).all();
+            LIMIT ? OFFSET ?
+        `).all(limit, skip);
 
         // Parse user object
         const parsedActivities = activities.map(act => ({
@@ -556,9 +705,48 @@ router.get('/activities', requireAuth, (req, res) => {
             }
         }));
 
-        res.json(parsedActivities);
+        res.json({ items: parsedActivities, total, limit, skip });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao carregar atividades', details: err.message });
+        sendError(res, 500, 'Falha ao carregar atividades', err.message);
+    }
+});
+
+// NOTIFICATIONS
+router.get('/notifications', requireAuth, (req, res) => {
+    try {
+        const userId = req.user.id;
+        const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 30, 1), 100);
+        const skip = Math.max(Number.parseInt(req.query.skip, 10) || 0, 0);
+
+        const total = db.prepare('SELECT COUNT(*) as count FROM notifications WHERE userId = ?').get(userId).count;
+        const unreadCount = db.prepare('SELECT COUNT(*) as count FROM notifications WHERE userId = ? AND read = 0').get(userId).count;
+        const notifications = db.prepare(`
+            SELECT * FROM notifications WHERE userId = ? ORDER BY createdAt DESC LIMIT ? OFFSET ?
+        `).all(userId, limit, skip);
+
+        res.json({ items: notifications, total, unreadCount, limit, skip });
+    } catch (err) {
+        sendError(res, 500, 'Falha ao carregar notificações', err.message);
+    }
+});
+
+router.put('/notifications/:id/read', requireAuth, (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = db.prepare('UPDATE notifications SET read = 1 WHERE id = ? AND userId = ?').run(id, req.user.id);
+        if (result.changes === 0) return sendError(res, 404, 'Notificação não encontrada');
+        res.json({ success: true });
+    } catch (err) {
+        sendError(res, 500, 'Falha ao marcar notificação como lida', err.message);
+    }
+});
+
+router.put('/notifications/read-all', requireAuth, (req, res) => {
+    try {
+        db.prepare('UPDATE notifications SET read = 1 WHERE userId = ? AND read = 0').run(req.user.id);
+        res.json({ success: true });
+    } catch (err) {
+        sendError(res, 500, 'Falha ao marcar notificações como lidas', err.message);
     }
 });
 
@@ -568,7 +756,7 @@ router.get('/users', requireAuth, (req, res) => {
         const users = db.prepare('SELECT * FROM users').all();
         res.json(users);
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao carregar usuários', details: err.message });
+        sendError(res, 500, 'Falha ao carregar usuários', err.message);
     }
 });
 
@@ -576,14 +764,14 @@ router.get('/users', requireAuth, (req, res) => {
 router.get('/repos', requireAuth, (req, res) => {
     try {
         const repos = db.prepare(`
-            SELECT r.*, 
-                   p.status as lastPipelineStatus, 
+            SELECT r.*,
+                   p.status as lastPipelineStatus,
                    p.finishedAt as lastPipelineDate
             FROM repositories r
             LEFT JOIN pipelines p ON p.id = (
-                SELECT id FROM pipelines 
-                WHERE repoId = r.id 
-                ORDER BY createdAt DESC 
+                SELECT id FROM pipelines
+                WHERE repoId = r.id
+                ORDER BY createdAt DESC
                 LIMIT 1
             )
         `).all();
@@ -593,11 +781,11 @@ router.get('/repos', requireAuth, (req, res) => {
         }));
         res.json(reposWithStatus);
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao carregar repositórios', details: err.message });
+        sendError(res, 500, 'Falha ao carregar repositórios', err.message);
     }
 });
 
-router.post('/repos', requireAuth, (req, res) => {
+router.post('/repos', requireAuth, requirePermission('repos:write'), validate(createRepoSchema), (req, res) => {
     const { id, name, description, status, lastUpdated, branch, issues, localPath: providedLocalPath, linkExisting } = req.body;
     try {
         let fullPath;
@@ -607,20 +795,20 @@ router.post('/repos', requireAuth, (req, res) => {
             fullPath = path.resolve(providedLocalPath);
 
             if (!fs.existsSync(fullPath)) {
-                return res.status(400).json({ error: `Caminho não encontrado: ${fullPath}` });
+                return sendError(res, 400, `Caminho não encontrado: ${fullPath}`);
             }
 
             // Verify it's a git repo
             const gitDir = path.join(fullPath, '.git');
             if (!fs.existsSync(gitDir)) {
-                return res.status(400).json({ error: 'O diretório não contém um repositório Git (.git não encontrado).' });
+                return sendError(res, 400, 'O diretório não contém um repositório Git (.git não encontrado).');
             }
 
         } else {
             // --- CREATE NEW REPO MODE ---
             const setting = db.prepare("SELECT value FROM settings WHERE key = 'gitDirectory'").get();
             if (!setting || !setting.value) {
-                return res.status(400).json({ error: 'Diretório Git não configurado nas Configurações do Sistema.' });
+                return sendError(res, 400, 'Diretório Git não configurado nas Configurações do Sistema.');
             }
             const gitDir = setting.value;
 
@@ -662,7 +850,7 @@ router.post('/repos', requireAuth, (req, res) => {
         res.json({ success: true, repo: { id, name, description, localPath: fullPath } });
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: 'Falha ao criar/vincular repositório', details: error.message });
+        sendError(res, 500, 'Falha ao criar/vincular repositório', error.message);
     }
 });
 
@@ -671,7 +859,7 @@ router.put('/repos/:id/settings', requireAuth, (req, res) => {
     const { gitlabProjectPath, remoteUrl } = req.body;
     try {
         const repo = db.prepare('SELECT id FROM repositories WHERE id = ?').get(id);
-        if (!repo) return res.status(404).json({ error: 'Repositório não encontrado' });
+        if (!repo) return sendError(res, 404, 'Repositório não encontrado');
 
         const updates = [];
         const values = [];
@@ -684,23 +872,23 @@ router.put('/repos/:id/settings', requireAuth, (req, res) => {
         db.prepare(`UPDATE repositories SET ${updates.join(', ')} WHERE id = ?`).run(...values);
         res.json({ success: true });
     } catch (error) {
-        res.status(500).json({ error: 'Falha ao salvar configurações', details: error.message });
+        sendError(res, 500, 'Falha ao salvar configurações', error.message);
     }
 });
 
-router.delete('/repos/:id', requireAuth, (req, res) => {
+router.delete('/repos/:id', requireAuth, requirePermission('repos:write'), (req, res) => {
     const { id } = req.params;
     try {
         const result = db.prepare('DELETE FROM repositories WHERE id = ?').run(id);
         if (result.changes === 0) {
-            return res.status(404).json({ error: 'Repositório não encontrado' });
+            return sendError(res, 404, 'Repositório não encontrado');
         }
         // Também remove tarefas associadas ao repositório (opcional, pode ser um soft-delete)
         db.prepare('UPDATE tasks SET repositoryId = NULL WHERE repositoryId = ?').run(id);
         res.json({ message: 'Repositório removido com sucesso' });
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: 'Falha ao remover repositório', details: error.message });
+        sendError(res, 500, 'Falha ao remover repositório', error.message);
     }
 });
 
@@ -711,11 +899,11 @@ router.get('/repos/:id/files', requireAuth, (req, res) => {
     try {
         const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(id);
         if (!repo) {
-            return res.status(404).json({ error: 'Repositório não encontrado' });
+            return sendError(res, 404, 'Repositório não encontrado');
         }
 
         if (!repo.localPath || !fs.existsSync(repo.localPath)) {
-            return res.status(404).json({ error: 'Diretório do repositório não encontrado', path: repo.localPath });
+            return sendError(res, 404, 'Diretório do repositório não encontrado');
         }
 
         // Build safe target directory
@@ -724,11 +912,11 @@ router.get('/repos/:id/files', requireAuth, (req, res) => {
 
         // Prevent path traversal
         if (!isPathInsideRoot(repo.localPath, targetDir)) {
-            return res.status(403).json({ error: 'Acesso negado' });
+            return sendError(res, 403, 'Acesso negado');
         }
 
         if (!fs.existsSync(targetDir)) {
-            return res.status(404).json({ error: 'Diretório não encontrado', path: targetDir });
+            return sendError(res, 404, 'Diretório não encontrado');
         }
 
         const items = fs.readdirSync(targetDir, { withFileTypes: true });
@@ -752,7 +940,7 @@ router.get('/repos/:id/files', requireAuth, (req, res) => {
         res.json({ files, localPath: repo.localPath, currentPath: safeSub });
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: 'Falha ao listar arquivos', details: error.message });
+        sendError(res, 500, 'Falha ao listar arquivos', error.message);
     }
 });
 
@@ -762,17 +950,17 @@ router.get('/repos/:id/file', requireAuth, (req, res) => {
     const { filePath } = req.query;
 
     if (!filePath) {
-        return res.status(400).json({ error: 'Caminho do arquivo é obrigatório' });
+        return sendError(res, 400, 'Caminho do arquivo é obrigatório');
     }
 
     try {
         const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(id);
         if (!repo) {
-            return res.status(404).json({ error: 'Repositório não encontrado' });
+            return sendError(res, 404, 'Repositório não encontrado');
         }
 
         if (!repo.localPath || !fs.existsSync(repo.localPath)) {
-            return res.status(404).json({ error: 'Diretório do repositório não encontrado' });
+            return sendError(res, 404, 'Diretório do repositório não encontrado');
         }
 
         // Construir caminho seguro (prevenir path traversal)
@@ -781,47 +969,47 @@ router.get('/repos/:id/file', requireAuth, (req, res) => {
 
         // Verificar se o arquivo está dentro do diretório do repositório
         if (!isPathInsideRoot(repo.localPath, fullPath)) {
-            return res.status(403).json({ error: 'Acesso negado' });
+            return sendError(res, 403, 'Acesso negado');
         }
 
         if (!fs.existsSync(fullPath)) {
-            return res.status(404).json({ error: 'Arquivo não encontrado' });
+            return sendError(res, 404, 'Arquivo não encontrado');
         }
 
         const stat = fs.statSync(fullPath);
         if (stat.isDirectory()) {
-            return res.status(400).json({ error: 'O caminho aponta para um diretório' });
+            return sendError(res, 400, 'O caminho aponta para um diretório');
         }
 
         const content = fs.readFileSync(fullPath, 'utf-8');
         res.json({ content, fileName: path.basename(fullPath) });
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: 'Falha ao ler arquivo', details: error.message });
+        sendError(res, 500, 'Falha ao ler arquivo', error.message);
     }
 });
 
 // Salvar conteúdo de arquivo do repositório (com opção de commit Git)
-router.put('/repos/:id/file', requireAuth, async (req, res) => {
+router.put('/repos/:id/file', requireAuth, requirePermission('repos:write'), async (req, res) => {
     const { id } = req.params;
     const { filePath, content, commitMessage } = req.body;
 
     if (!filePath) {
-        return res.status(400).json({ error: 'Caminho do arquivo é obrigatório' });
+        return sendError(res, 400, 'Caminho do arquivo é obrigatório');
     }
 
     if (content === undefined) {
-        return res.status(400).json({ error: 'Conteúdo é obrigatório' });
+        return sendError(res, 400, 'Conteúdo é obrigatório');
     }
 
     try {
         const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(id);
         if (!repo) {
-            return res.status(404).json({ error: 'Repositório não encontrado' });
+            return sendError(res, 404, 'Repositório não encontrado');
         }
 
         if (!repo.localPath || !fs.existsSync(repo.localPath)) {
-            return res.status(404).json({ error: 'Diretório do repositório não encontrado' });
+            return sendError(res, 404, 'Diretório do repositório não encontrado');
         }
 
         // Construir caminho seguro (prevenir path traversal)
@@ -830,7 +1018,7 @@ router.put('/repos/:id/file', requireAuth, async (req, res) => {
 
         // Verificar se o arquivo está dentro do diretório do repositório
         if (!isPathInsideRoot(repo.localPath, fullPath)) {
-            return res.status(403).json({ error: 'Acesso negado' });
+            return sendError(res, 403, 'Acesso negado');
         }
 
         // Salvar arquivo
@@ -858,7 +1046,7 @@ router.put('/repos/:id/file', requireAuth, async (req, res) => {
         }
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: 'Falha ao salvar arquivo', details: error.message });
+        sendError(res, 500, 'Falha ao salvar arquivo', error.message);
     }
 });
 
@@ -870,11 +1058,11 @@ router.get('/repos/:id/git/commits', requireAuth, async (req, res) => {
     try {
         const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(id);
         if (!repo) {
-            return res.status(404).json({ error: 'Repositório não encontrado' });
+            return sendError(res, 404, 'Repositório não encontrado');
         }
 
         if (!repo.localPath || !fs.existsSync(repo.localPath)) {
-            return res.status(404).json({ error: 'Diretório do repositório não encontrado' });
+            return sendError(res, 404, 'Diretório do repositório não encontrado');
         }
 
         // Obter logs de commits formatados
@@ -927,14 +1115,13 @@ router.get('/sprints', requireAuth, (req, res) => {
         const sprints = db.prepare('SELECT * FROM sprints').all();
         res.json(sprints);
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao carregar sprints', details: err.message });
+        sendError(res, 500, 'Falha ao carregar sprints', err.message);
     }
 });
 
-router.post('/sprints', requireAuth, (req, res) => {
+router.post('/sprints', requireAuth, requirePermission('tasks:write'), validate(createSprintSchema), (req, res) => {
     const { id, name, goal, startDate, endDate, status } = req.body;
     try {
-        if (!id || !name) return res.status(400).json({ error: 'ID e nome são obrigatórios' });
         const stmt = db.prepare('INSERT INTO sprints (id, name, goal, startDate, endDate, status) VALUES (?, ?, ?, ?, ?, ?)');
         stmt.run(id, name, goal, startDate, endDate, status);
         createActivityLog({
@@ -952,18 +1139,18 @@ router.post('/sprints', requireAuth, (req, res) => {
         });
         res.json({ message: 'Sprint created' });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao criar sprint', details: err.message });
+        sendError(res, 500, 'Falha ao criar sprint', err.message);
     }
 });
 
-router.put('/sprints/:id', requireAuth, (req, res) => {
+router.put('/sprints/:id', requireAuth, requirePermission('tasks:write'), validate(updateSprintSchema), (req, res) => {
     const { id } = req.params;
     const { status, goal, name, startDate, endDate } = req.body;
 
     try {
         const existingSprint = db.prepare('SELECT * FROM sprints WHERE id = ?').get(id);
         if (!existingSprint) {
-            return res.status(404).json({ error: 'Sprint não encontrada' });
+            return sendError(res, 404, 'Sprint não encontrada');
         }
 
         // If setting to active, simple check to ensure no other active sprints (optional, but good practice)
@@ -1021,18 +1208,18 @@ router.put('/sprints/:id', requireAuth, (req, res) => {
 
         res.json({ message: 'Sprint updated' });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao atualizar sprint', details: err.message });
+        sendError(res, 500, 'Falha ao atualizar sprint', err.message);
     }
 });
 
-router.delete('/sprints/:id', requireAuth, (req, res) => {
+router.delete('/sprints/:id', requireAuth, requirePermission('tasks:write'), (req, res) => {
     const { id } = req.params;
     try {
         db.prepare('DELETE FROM sprints WHERE id = ?').run(id);
         db.prepare('UPDATE tasks SET sprintId = NULL WHERE sprintId = ?').run(id);
         res.json({ message: 'Sprint deleted' });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao remover sprint', details: err.message });
+        sendError(res, 500, 'Falha ao remover sprint', err.message);
     }
 });
 
@@ -1040,7 +1227,7 @@ router.delete('/sprints/:id', requireAuth, (req, res) => {
 router.get('/tasks', requireAuth, (req, res) => {
     try {
         const tasks = db.prepare(`
-        SELECT t.*, 
+        SELECT t.*,
                u.id as assignee_id, u.name as assignee_name, u.avatar as assignee_avatar,
                p.id as pair_id, p.name as pair_name, p.avatar as pair_avatar,
                s.name as sprint_name
@@ -1074,22 +1261,19 @@ router.get('/tasks', requireAuth, (req, res) => {
         res.json(parsedTasks);
     } catch (err) {
         console.error('Failed to fetch tasks:', err);
-        res.status(500).json({ error: 'Falha ao carregar tarefas', details: err.message });
+        sendError(res, 500, 'Falha ao carregar tarefas', err.message);
     }
 });
 
-router.post('/tasks', requireAuth, (req, res) => {
+router.post('/tasks', requireAuth, requirePermission('tasks:write'), validate(createTaskSchema), (req, res) => {
     const task = req.body;
     try {
-        if (!task.id || !task.title || !task.status || !task.priority) {
-            return res.status(400).json({ error: 'Campos obrigatórios: id, title, status, priority' });
-        }
         const stmt = db.prepare(`
             INSERT INTO tasks (
                 id, title, description, status, priority, assigneeId, pairAssigneeId, storyPoints,
                 tags, sprintId, repositoryId, xpPractices, type, acceptanceCriteria, dorChecklist,
                 dodChecklist, dependencies, risk, linkedBranch, linkedPRUrl, linkedMRIid
-            ) 
+            )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
@@ -1127,20 +1311,20 @@ router.post('/tasks', requireAuth, (req, res) => {
 
         res.json({ message: 'Task created', id: task.id });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao criar tarefa', details: err.message });
+        sendError(res, 500, 'Falha ao criar tarefa', err.message);
     }
 });
 
-router.delete('/tasks/:id', requireAuth, (req, res) => {
+router.delete('/tasks/:id', requireAuth, requirePermission('tasks:write'), (req, res) => {
     const { id } = req.params;
     try {
         const result = db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
-        if (result.changes === 0) return res.status(404).json({ error: 'Tarefa não encontrada' });
+        if (result.changes === 0) return sendError(res, 404, 'Tarefa não encontrada');
         db.prepare('DELETE FROM subtasks WHERE taskId = ?').run(id);
         db.prepare('DELETE FROM comments WHERE taskId = ?').run(id);
         res.json({ message: 'Tarefa removida' });
     } catch (error) {
-        res.status(500).json({ error: 'Falha ao remover tarefa', details: error.message });
+        sendError(res, 500, 'Falha ao remover tarefa', error.message);
     }
 });
 
@@ -1152,14 +1336,14 @@ router.post('/activities', requireAuth, (req, res) => {
         db.prepare(`
             INSERT INTO activities (id, userId, action, target, targetType, taskId, timestamp, meta)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(id || `a-${Date.now()}`, userId, action, target, targetType, taskId || null, timestamp, meta || null);
+        `).run(id || uid('a'), userId, action, target, targetType, taskId || null, timestamp, meta || null);
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to log activity', details: err.message });
+        sendError(res, 500, 'Failed to log activity', err.message);
     }
 });
 
-router.put('/tasks/:id', requireAuth, (req, res) => {
+router.put('/tasks/:id', requireAuth, requirePermission('tasks:write'), validate(updateTaskSchema), (req, res) => {
     const { id } = req.params;
     const updates = req.body;
 
@@ -1169,7 +1353,7 @@ router.put('/tasks/:id', requireAuth, (req, res) => {
             FROM tasks
             WHERE id = ?
         `).get(id);
-        if (!existingTask) return res.status(404).json({ error: 'Tarefa não encontrada' });
+        if (!existingTask) return sendError(res, 404, 'Tarefa não encontrada');
 
         const allowed = ['title', 'description', 'status', 'priority', 'assigneeId', 'pairAssigneeId',
             'storyPoints', 'tags', 'sprintId', 'repositoryId', 'timeSpent', 'xpPractices',
@@ -1198,7 +1382,7 @@ router.put('/tasks/:id', requireAuth, (req, res) => {
             db.prepare('DELETE FROM subtasks WHERE taskId = ?').run(id);
             const subtaskStmt = db.prepare('INSERT INTO subtasks (id, taskId, text, done) VALUES (?, ?, ?, ?)');
             for (const st of updates.subtasks) {
-                subtaskStmt.run(st.id || `st-${Date.now()}-${Math.random()}`, id, st.text, st.done ? 1 : 0);
+                subtaskStmt.run(st.id || uid('st'), id, st.text, st.done ? 1 : 0);
             }
         }
 
@@ -1250,7 +1434,7 @@ router.put('/tasks/:id', requireAuth, (req, res) => {
 
         res.json({ message: 'Task updated' });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao atualizar tarefa', details: err.message });
+        sendError(res, 500, 'Falha ao atualizar tarefa', err.message);
     }
 });
 
@@ -1272,18 +1456,18 @@ router.get('/tasks/:id/comments', requireAuth, (req, res) => {
             author: { id: c.author_id, name: c.author_name, avatar: c.author_avatar }
         })));
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao carregar comentários', details: err.message });
+        sendError(res, 500, 'Falha ao carregar comentários', err.message);
     }
 });
 
 router.post('/tasks/:id/comments', requireAuth, (req, res) => {
     const { id } = req.params;
     const { text } = req.body;
-    if (!text?.trim()) return res.status(400).json({ error: 'Texto do comentário é obrigatório' });
+    if (!text?.trim()) return sendError(res, 400, 'Texto do comentário é obrigatório');
     try {
         const task = db.prepare('SELECT id, title FROM tasks WHERE id = ?').get(id);
-        if (!task) return res.status(404).json({ error: 'Tarefa não encontrada' });
-        const commentId = `c-${Date.now()}`;
+        if (!task) return sendError(res, 404, 'Tarefa não encontrada');
+        const commentId = uid('c');
         const timestamp = new Date().toISOString();
         const normalizedText = text.trim();
         db.prepare('INSERT INTO comments (id, taskId, authorId, text, timestamp) VALUES (?, ?, ?, ?, ?)').run(commentId, id, req.user.id, normalizedText, timestamp);
@@ -1298,7 +1482,7 @@ router.post('/tasks/:id/comments', requireAuth, (req, res) => {
         const user = db.prepare('SELECT id, name, avatar FROM users WHERE id = ?').get(req.user.id);
         res.status(201).json({ id: commentId, text: normalizedText, timestamp, author: user });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao criar comentário', details: err.message });
+        sendError(res, 500, 'Falha ao criar comentário', err.message);
     }
 });
 
@@ -1306,14 +1490,14 @@ router.delete('/tasks/:taskId/comments/:commentId', requireAuth, (req, res) => {
     const { taskId, commentId } = req.params;
     try {
         const comment = db.prepare('SELECT authorId FROM comments WHERE id = ? AND taskId = ?').get(commentId, taskId);
-        if (!comment) return res.status(404).json({ error: 'Comentário não encontrado' });
+        if (!comment) return sendError(res, 404, 'Comentário não encontrado');
         if (comment.authorId !== req.user.id && req.user.role !== 'admin') {
-            return res.status(403).json({ error: 'Sem permissão para excluir este comentário' });
+            return sendError(res, 403, 'Sem permissão para excluir este comentário');
         }
         db.prepare('DELETE FROM comments WHERE id = ?').run(commentId);
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao excluir comentário', details: err.message });
+        sendError(res, 500, 'Falha ao excluir comentário', err.message);
     }
 });
 
@@ -1352,7 +1536,7 @@ router.put('/admin/users/:id', requireAuth, requireAdmin, (req, res) => {
 
         res.json({ message: 'Usuário atualizado' });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao atualizar usuário', details: err.message });
+        sendError(res, 500, 'Falha ao atualizar usuário', err.message);
     }
 });
 
@@ -1360,7 +1544,7 @@ router.delete('/admin/users/:id', requireAuth, requireAdmin, (req, res) => {
     const { id } = req.params;
 
     if (id === 'admin') {
-        return res.status(400).json({ error: 'Não é possível deletar o administrador principal' });
+        return sendError(res, 400, 'Não é possível deletar o administrador principal');
     }
 
     try {
@@ -1368,7 +1552,7 @@ router.delete('/admin/users/:id', requireAuth, requireAdmin, (req, res) => {
         db.prepare('DELETE FROM users WHERE id = ?').run(id);
         res.json({ message: 'Usuário removido' });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao remover usuário', details: err.message });
+        sendError(res, 500, 'Falha ao remover usuário', err.message);
     }
 });
 
@@ -1376,16 +1560,16 @@ router.post('/admin/users', requireAuth, requireAdmin, (req, res) => {
     const { name, email, password, role, groupIds } = req.body;
 
     if (!name || !email || !password) {
-        return res.status(400).json({ error: 'Nome, email e senha são obrigatórios' });
+        return sendError(res, 400, 'Nome, email e senha são obrigatórios');
     }
 
     try {
         const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
         if (existing) {
-            return res.status(409).json({ error: 'Email já cadastrado' });
+            return sendError(res, 409, 'Email já cadastrado');
         }
 
-        const userId = `u-${Date.now()}`;
+        const userId = uid('u');
         const hashedPassword = bcrypt.hashSync(password, 10);
 
         db.prepare(`
@@ -1405,7 +1589,7 @@ router.post('/admin/users', requireAuth, requireAdmin, (req, res) => {
 
         res.json({ message: 'Usuário criado', userId });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao criar usuário', details: err.message });
+        sendError(res, 500, 'Falha ao criar usuário', err.message);
     }
 });
 
@@ -1418,21 +1602,21 @@ router.get('/admin/groups', requireAuth, requireAdmin, (req, res) => {
             permissions: JSON.parse(g.permissions || '[]')
         })));
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao carregar grupos', details: err.message });
+        sendError(res, 500, 'Falha ao carregar grupos', err.message);
     }
 });
 
 router.post('/admin/groups', requireAuth, requireAdmin, (req, res) => {
     const { name, description, permissions } = req.body;
     try {
-        if (!name) return res.status(400).json({ error: 'Nome do grupo é obrigatório' });
-        const groupId = `g-${Date.now()}`;
+        if (!name) return sendError(res, 400, 'Nome do grupo é obrigatório');
+        const groupId = uid('g');
         db.prepare('INSERT INTO groups (id, name, description, permissions) VALUES (?, ?, ?, ?)').run(
             groupId, name, description, JSON.stringify(permissions || [])
         );
         res.json({ message: 'Grupo criado', groupId });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao criar grupo', details: err.message });
+        sendError(res, 500, 'Falha ao criar grupo', err.message);
     }
 });
 
@@ -1446,7 +1630,7 @@ router.put('/admin/groups/:id', requireAuth, requireAdmin, (req, res) => {
         if (permissions) db.prepare('UPDATE groups SET permissions = ? WHERE id = ?').run(JSON.stringify(permissions), id);
         res.json({ message: 'Grupo atualizado' });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao atualizar grupo', details: err.message });
+        sendError(res, 500, 'Falha ao atualizar grupo', err.message);
     }
 });
 
@@ -1454,7 +1638,7 @@ router.delete('/admin/groups/:id', requireAuth, requireAdmin, (req, res) => {
     const { id } = req.params;
 
     if (['g-admins', 'g-devs', 'g-viewers'].includes(id)) {
-        return res.status(400).json({ error: 'Não é possível deletar grupos padrão' });
+        return sendError(res, 400, 'Não é possível deletar grupos padrão');
     }
 
     try {
@@ -1462,7 +1646,7 @@ router.delete('/admin/groups/:id', requireAuth, requireAdmin, (req, res) => {
         db.prepare('DELETE FROM groups WHERE id = ?').run(id);
         res.json({ message: 'Grupo removido' });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao remover grupo', details: err.message });
+        sendError(res, 500, 'Falha ao remover grupo', err.message);
     }
 });
 
@@ -1474,7 +1658,7 @@ router.get('/admin/settings', requireAuth, requireAdmin, (req, res) => {
         settings.forEach(s => result[s.key] = s.value);
         res.json(result);
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao carregar configurações', details: err.message });
+        sendError(res, 500, 'Falha ao carregar configurações', err.message);
     }
 });
 
@@ -1493,7 +1677,7 @@ router.put('/admin/settings', requireAuth, requireAdmin, (req, res) => {
 
         res.json({ message: 'Configurações atualizadas' });
     } catch (err) {
-        res.status(500).json({ error: 'Falha ao salvar configurações', details: err.message });
+        sendError(res, 500, 'Falha ao salvar configurações', err.message);
     }
 });
 

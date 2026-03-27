@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import db from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { encrypt, decrypt } from '../crypto.js';
+import { uid, sendError } from '../utils.js';
 
 const router = express.Router();
 const CLICKUP_API_BASE = 'https://api.clickup.com';
@@ -246,7 +247,7 @@ const fetchAllClickUpTasks = async ({ endpoint, token, maxPages = 20 }) => {
 };
 
 const callClickUpMcp = async ({ token, method, params }) => {
-    const rpcId = `rpc-${Date.now()}`;
+    const rpcId = uid('rpc');
     const authCandidates = getClickUpAuthCandidates(token);
     let lastError = null;
 
@@ -309,7 +310,7 @@ const redactPayload = (value) => {
 };
 
 const writeMcpAudit = ({ userId, actionType, toolName, workspaceId, requestPayload, responseSummary, status }) => {
-    const id = `mcp-audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = uid('mcp-audit');
     db.prepare(`
         INSERT INTO mcp_audit (id, userId, provider, actionType, toolName, workspaceId, requestPayloadRedacted, responseSummary, status, createdAt)
         VALUES (?, ?, 'clickup-mcp', ?, ?, ?, ?, ?, ?, ?)
@@ -330,6 +331,94 @@ const buildPkceChallenge = (codeVerifier) => {
     return crypto.createHash('sha256').update(codeVerifier).digest('base64url');
 };
 
+/**
+ * Attempt to refresh a ClickUp MCP OAuth token using the stored refresh token.
+ * If successful, updates the stored token and returns the new decrypted access token.
+ * Returns null if refresh is not possible/fails.
+ */
+const tryRefreshClickUpMcpToken = async (userId) => {
+    let integration;
+    try {
+        integration = db.prepare('SELECT id, token, meta FROM integrations WHERE userId = ? AND provider = ?').get(userId, 'clickup_mcp');
+    } catch {
+        return null;
+    }
+    if (!integration) return null;
+
+    const meta = integration.meta ? JSON.parse(integration.meta) : {};
+    if (!meta.hasRefreshToken || !meta.encryptedRefreshToken) return null;
+
+    const clientId = process.env.CLICKUP_MCP_CLIENT_ID;
+    const clientSecret = process.env.CLICKUP_MCP_CLIENT_SECRET;
+    if (!clientId || !clientSecret) return null;
+
+    try {
+        const refreshToken = decrypt(meta.encryptedRefreshToken);
+        if (!refreshToken) return null;
+
+        const tokenRes = await fetch(CLICKUP_MCP_OAUTH_TOKEN_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({
+                client_id: clientId,
+                client_secret: clientSecret,
+                grant_type: 'refresh_token',
+                refresh_token: refreshToken,
+            })
+        });
+
+        const payload = await tokenRes.json().catch(() => ({}));
+        if (!tokenRes.ok || !payload?.access_token) return null;
+
+        const newAccessToken = payload.access_token;
+        const newRefreshToken = payload.refresh_token || refreshToken;
+        const expiresAt = payload.expires_in
+            ? new Date(Date.now() + Number(payload.expires_in) * 1000).toISOString()
+            : null;
+
+        // Update stored tokens
+        const newMeta = {
+            ...meta,
+            expiresAt,
+            hasRefreshToken: Boolean(newRefreshToken),
+            encryptedRefreshToken: encrypt(newRefreshToken),
+            lastTokenRefreshAt: new Date().toISOString(),
+        };
+
+        db.prepare('UPDATE integrations SET token = ?, meta = ? WHERE id = ?')
+            .run(encrypt(newAccessToken), JSON.stringify(newMeta), integration.id);
+
+        return newAccessToken;
+    } catch (err) {
+        console.error('ClickUp MCP token refresh failed:', err.message);
+        return null;
+    }
+};
+
+/**
+ * Get the ClickUp MCP token, refreshing if expired.
+ */
+const getClickUpMcpToken = async (userId) => {
+    let integration;
+    try {
+        integration = db.prepare('SELECT token, meta FROM integrations WHERE userId = ? AND provider = ?').get(userId, 'clickup_mcp');
+    } catch {
+        return null;
+    }
+    if (!integration) return null;
+
+    const meta = integration.meta ? JSON.parse(integration.meta) : {};
+    const token = decrypt(integration.token);
+
+    // If we know expiration and it's past, try refresh first
+    if (meta.expiresAt && new Date(meta.expiresAt).getTime() < Date.now()) {
+        const refreshed = await tryRefreshClickUpMcpToken(userId);
+        return refreshed || token; // Fallback to old token if refresh fails
+    }
+
+    return token;
+};
+
 // POST /api/integrations/clickup/mcp/oauth/start
 router.post('/clickup/mcp/oauth/start', requireAuth, (req, res) => {
     const clientId = process.env.CLICKUP_MCP_CLIENT_ID;
@@ -337,32 +426,36 @@ router.post('/clickup/mcp/oauth/start', requireAuth, (req, res) => {
     const workspaceId = req.body?.workspaceId || null;
 
     if (!clientId || !redirectUri) {
-        return res.status(400).json({ error: 'CLICKUP_MCP_CLIENT_ID e CLICKUP_MCP_REDIRECT_URI são obrigatórios no servidor.' });
+        return sendError(res, 400, 'CLICKUP_MCP_CLIENT_ID e CLICKUP_MCP_REDIRECT_URI são obrigatórios no servidor.');
     }
 
-    const state = crypto.randomBytes(24).toString('base64url');
-    const codeVerifier = crypto.randomBytes(64).toString('base64url');
-    const codeChallenge = buildPkceChallenge(codeVerifier);
-    const createdAt = new Date();
-    const expiresAt = new Date(createdAt.getTime() + 10 * 60 * 1000);
-    const id = `oauth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    try {
+        const state = crypto.randomBytes(24).toString('base64url');
+        const codeVerifier = crypto.randomBytes(64).toString('base64url');
+        const codeChallenge = buildPkceChallenge(codeVerifier);
+        const createdAt = new Date();
+        const expiresAt = new Date(createdAt.getTime() + 10 * 60 * 1000);
+        const id = uid('oauth');
 
-    db.prepare(`
-        INSERT INTO clickup_oauth_states (id, userId, state, codeVerifier, workspaceId, createdAt, expiresAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, req.user.id, state, encrypt(codeVerifier), workspaceId, createdAt.toISOString(), expiresAt.toISOString());
+        db.prepare(`
+            INSERT INTO clickup_oauth_states (id, userId, state, codeVerifier, workspaceId, createdAt, expiresAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(id, req.user.id, state, encrypt(codeVerifier), workspaceId, createdAt.toISOString(), expiresAt.toISOString());
 
-    const params = new URLSearchParams({
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        response_type: 'code',
-        state,
-        code_challenge: codeChallenge,
-        code_challenge_method: 'S256',
-    });
+        const params = new URLSearchParams({
+            client_id: clientId,
+            redirect_uri: redirectUri,
+            response_type: 'code',
+            state,
+            code_challenge: codeChallenge,
+            code_challenge_method: 'S256',
+        });
 
-    const authorizeUrl = `${CLICKUP_MCP_OAUTH_AUTHORIZE_URL}?${params.toString()}`;
-    res.json({ success: true, authorizeUrl, state, expiresAt: expiresAt.toISOString() });
+        const authorizeUrl = `${CLICKUP_MCP_OAUTH_AUTHORIZE_URL}?${params.toString()}`;
+        res.json({ success: true, authorizeUrl, state, expiresAt: expiresAt.toISOString() });
+    } catch (err) {
+        sendError(res, 500, 'Erro ao iniciar OAuth', err.message);
+    }
 });
 
 // GET /api/integrations/clickup/mcp/oauth/callback
@@ -386,13 +479,18 @@ router.get('/clickup/mcp/oauth/callback', async (req, res) => {
         return res.status(500).send('Servidor sem variáveis OAuth do ClickUp MCP configuradas.');
     }
 
-    const oauthState = db.prepare('SELECT * FROM clickup_oauth_states WHERE state = ?').get(String(state));
+    let oauthState;
+    try {
+        oauthState = db.prepare('SELECT * FROM clickup_oauth_states WHERE state = ?').get(String(state));
+    } catch (_err) {
+        return res.status(500).send('Erro ao validar state OAuth.');
+    }
     if (!oauthState) {
         return res.status(400).send('State OAuth inválido ou expirado.');
     }
 
     if (new Date(oauthState.expiresAt).getTime() < Date.now()) {
-        db.prepare('DELETE FROM clickup_oauth_states WHERE id = ?').run(oauthState.id);
+        try { db.prepare('DELETE FROM clickup_oauth_states WHERE id = ?').run(oauthState.id); } catch { /* best effort cleanup */ }
         return res.status(400).send('State OAuth expirado.');
     }
 
@@ -420,7 +518,7 @@ router.get('/clickup/mcp/oauth/callback', async (req, res) => {
             throw new Error(msg);
         }
 
-        const mcpIntegrationId = `int-clickup-mcp-${Date.now()}`;
+        const mcpIntegrationId = uid('int-clickup-mcp');
         const accessToken = tokenPayload.access_token;
         const refreshToken = tokenPayload.refresh_token || '';
         const expiresAt = tokenPayload.expires_in
@@ -434,6 +532,7 @@ router.get('/clickup/mcp/oauth/callback', async (req, res) => {
             expiresAt,
             oauthConnectedAt: new Date().toISOString(),
             hasRefreshToken: Boolean(refreshToken),
+            encryptedRefreshToken: refreshToken ? encrypt(refreshToken) : null,
         });
 
         db.prepare('DELETE FROM integrations WHERE userId = ? AND provider = ?').run(oauthState.userId, 'clickup_mcp');
@@ -493,7 +592,7 @@ router.get('/', requireAuth, (req, res) => {
         res.json(formatted);
     } catch (err) {
         console.error('Integrations list error:', err);
-        res.status(500).json({ error: 'Failed to fetch integrations' });
+        sendError(res, 500, 'Failed to fetch integrations');
     }
 });
 
@@ -502,7 +601,7 @@ router.post('/gitlab', requireAuth, async (req, res) => {
     const { token, username, gitlabUrl } = req.body;
 
     if (!token || !username) {
-        return res.status(400).json({ error: 'Token e Username são obrigatórios' });
+        return sendError(res, 400, 'Token e Username são obrigatórios');
     }
 
     // Default to gitlab.com if no URL provided
@@ -519,20 +618,20 @@ router.post('/gitlab', requireAuth, async (req, res) => {
 
         if (!response.ok) {
             if (response.status === 401) {
-                return res.status(401).json({ error: 'Token GitLab inválido' });
+                return sendError(res, 401, 'Token GitLab inválido');
             }
-            return res.status(response.status).json({ error: 'Falha ao conectar com GitLab' });
+            return sendError(res, response.status, 'Falha ao conectar com GitLab');
         }
 
         const data = await response.json();
 
         // Check if username matches
         if (data.username.toLowerCase() !== username.toLowerCase()) {
-            return res.status(400).json({ error: `Token pertence ao usuário ${data.username}, não ${username}` });
+            return sendError(res, 400, `Token pertence ao usuário ${data.username}, não ${username}`);
         }
 
         // Save to DB
-        const id = `int-gl-${Date.now()}`;
+        const id = uid('int-gl');
         const meta = JSON.stringify({
             username: data.username,
             avatar: data.avatar_url,
@@ -550,7 +649,7 @@ router.post('/gitlab', requireAuth, async (req, res) => {
 
     } catch (err) {
         console.error('GitLab integration error:', err);
-        res.status(500).json({ error: 'Falha ao conectar com GitLab' });
+        sendError(res, 500, 'Falha ao conectar com GitLab');
     }
 });
 
@@ -560,7 +659,7 @@ router.post('/gitlab/sync', requireAuth, async (req, res) => {
         const integration = db.prepare('SELECT token, meta FROM integrations WHERE userId = ? AND provider = ?').get(req.user.id, 'gitlab');
 
         if (!integration) {
-            return res.status(400).json({ error: 'GitLab não conectado' });
+            return sendError(res, 400, 'GitLab não conectado');
         }
 
         const token = decrypt(integration.token);
@@ -577,7 +676,7 @@ router.post('/gitlab/sync', requireAuth, async (req, res) => {
         });
 
         if (!response.ok) {
-            return res.status(response.status).json({ error: 'Falha ao buscar issues do GitLab' });
+            return sendError(res, response.status, 'Falha ao buscar issues do GitLab');
         }
 
         const issues = await response.json();
@@ -602,7 +701,7 @@ router.post('/gitlab/sync', requireAuth, async (req, res) => {
 
     } catch (err) {
         console.error('Sync error:', err);
-        res.status(500).json({ error: 'Sincronização falhou' });
+        sendError(res, 500, 'Sincronização falhou');
     }
 });
 
@@ -612,7 +711,7 @@ router.post('/clickup', requireAuth, async (req, res) => {
     const { apiToken, workspaceId, listId, mcpAccessToken, mcpWorkspaceId } = req.body;
 
     if (!apiToken || !workspaceId) {
-        return res.status(400).json({ error: 'API Token e Workspace ID do ClickUp são obrigatórios.' });
+        return sendError(res, 400, 'API Token e Workspace ID do ClickUp são obrigatórios.');
     }
 
     try {
@@ -620,12 +719,12 @@ router.post('/clickup', requireAuth, async (req, res) => {
 
         if (!validation.ok) {
             if (validation.status === 401 || validation.status === 403) {
-                return res.status(401).json({ error: 'Credenciais ClickUp inválidas ou sem acesso ao workspace informado.' });
+                return sendError(res, 401, 'Credenciais ClickUp inválidas ou sem acesso ao workspace informado.');
             }
             if (validation.status === 404) {
-                return res.status(404).json({ error: 'Workspace ID não encontrado no ClickUp para este token.' });
+                return sendError(res, 404, 'Workspace ID não encontrado no ClickUp para este token.');
             }
-            return res.status(validation.status || 500).json({ error: 'Falha ao validar conexão com a API do ClickUp.' });
+            return sendError(res, validation.status || 500, 'Falha ao validar conexão com a API do ClickUp.');
         }
 
         let mcpConnected = false;
@@ -641,7 +740,7 @@ router.post('/clickup', requireAuth, async (req, res) => {
             }
         }
 
-        const id = `int-clickup-${Date.now()}`;
+        const id = uid('int-clickup');
         const meta = JSON.stringify({
             workspaceId,
             listId: listId || '',
@@ -675,7 +774,7 @@ router.post('/clickup', requireAuth, async (req, res) => {
         });
     } catch (err) {
         console.error('ClickUp integration error:', err);
-        res.status(500).json({ error: 'Falha ao conectar com o ClickUp.' });
+        sendError(res, 500, 'Falha ao conectar com o ClickUp.');
     }
 });
 
@@ -702,7 +801,7 @@ router.get('/clickup/status', requireAuth, async (req, res) => {
         let mcpHealthy = false;
         if (mcpIntegration) {
             try {
-                const mcpToken = decrypt(mcpIntegration.token);
+                const mcpToken = await getClickUpMcpToken(req.user.id);
                 await callClickUpMcp({ token: mcpToken, method: 'tools/list', params: {} });
                 mcpHealthy = true;
                 mcpError = null;
@@ -727,7 +826,7 @@ router.get('/clickup/status', requireAuth, async (req, res) => {
         });
     } catch (err) {
         console.error('ClickUp status error:', err);
-        res.status(500).json({ error: 'Falha ao consultar status da integração ClickUp.' });
+        sendError(res, 500, 'Falha ao consultar status da integração ClickUp.');
     }
 });
 
@@ -745,7 +844,7 @@ router.get('/clickup/tools', requireAuth, async (req, res) => {
             });
         }
 
-        const mcpToken = decrypt(mcpIntegration.token);
+        const mcpToken = await getClickUpMcpToken(req.user.id);
         try {
             const runtime = await callClickUpMcp({ token: mcpToken, method: 'tools/list', params: {} });
             const runtimeTools = Array.isArray(runtime?.tools) ? runtime.tools : [];
@@ -765,7 +864,7 @@ router.get('/clickup/tools', requireAuth, async (req, res) => {
         }
     } catch (err) {
         console.error('ClickUp tools error:', err);
-        res.status(500).json({ error: 'Falha ao obter catálogo de tools do ClickUp MCP.' });
+        sendError(res, 500, 'Falha ao obter catálogo de tools do ClickUp MCP.');
     }
 });
 
@@ -774,13 +873,13 @@ router.post('/clickup/mcp/execute', requireAuth, async (req, res) => {
     const { toolName, arguments: toolArgs = {}, dryRun = false } = req.body;
 
     if (!toolName) {
-        return res.status(400).json({ error: 'toolName é obrigatório.' });
+        return sendError(res, 400, 'toolName é obrigatório.');
     }
 
     try {
         const mcpIntegration = db.prepare('SELECT token, meta FROM integrations WHERE userId = ? AND provider = ?').get(req.user.id, 'clickup_mcp');
         if (!mcpIntegration) {
-            return res.status(400).json({ error: 'ClickUp MCP não está conectado.' });
+            return sendError(res, 400, 'ClickUp MCP não está conectado.');
         }
 
         if (dryRun) {
@@ -796,7 +895,7 @@ router.post('/clickup/mcp/execute', requireAuth, async (req, res) => {
             return res.json({ success: true, dryRun: true, toolName, arguments: toolArgs });
         }
 
-        const mcpToken = decrypt(mcpIntegration.token);
+        const mcpToken = await getClickUpMcpToken(req.user.id);
         const result = await callClickUpMcp({
             token: mcpToken,
             method: 'tools/call',
@@ -828,7 +927,7 @@ router.post('/clickup/mcp/execute', requireAuth, async (req, res) => {
             responseSummary: err.message || 'Falha na execução de tool MCP',
             status: 'failed',
         });
-        res.status(500).json({ error: err.message || 'Falha ao executar tool no ClickUp MCP.' });
+        sendError(res, 500, 'Falha ao executar tool no ClickUp MCP.', err.message);
     }
 });
 
@@ -836,16 +935,16 @@ router.post('/clickup/mcp/execute', requireAuth, async (req, res) => {
 router.post('/clickup/mcp/chat', requireAuth, async (req, res) => {
     const { channelId, text } = req.body;
     if (!channelId || !text) {
-        return res.status(400).json({ error: 'channelId e text são obrigatórios.' });
+        return sendError(res, 400, 'channelId e text são obrigatórios.');
     }
 
     try {
         const mcpIntegration = db.prepare('SELECT token FROM integrations WHERE userId = ? AND provider = ?').get(req.user.id, 'clickup_mcp');
         if (!mcpIntegration) {
-            return res.status(400).json({ error: 'ClickUp MCP não está conectado.' });
+            return sendError(res, 400, 'ClickUp MCP não está conectado.');
         }
 
-        const mcpToken = decrypt(mcpIntegration.token);
+        const mcpToken = await getClickUpMcpToken(req.user.id);
         const workspaceId = mcpIntegration.meta ? JSON.parse(mcpIntegration.meta).workspaceId : null;
         const result = await callClickUpMcp({
             token: mcpToken,
@@ -878,7 +977,7 @@ router.post('/clickup/mcp/chat', requireAuth, async (req, res) => {
             responseSummary: err.message || 'Falha no envio de mensagem MCP',
             status: 'failed',
         });
-        res.status(500).json({ error: err.message || 'Falha ao enviar mensagem via ClickUp MCP.' });
+        sendError(res, 500, 'Falha ao enviar mensagem via ClickUp MCP.', err.message);
     }
 });
 
@@ -902,7 +1001,7 @@ router.get('/clickup/mcp/audit', requireAuth, (req, res) => {
         res.json({ success: true, items: parsed });
     } catch (err) {
         console.error('ClickUp MCP audit list error:', err);
-        res.status(500).json({ error: 'Falha ao carregar trilha de auditoria MCP.' });
+        sendError(res, 500, 'Falha ao carregar trilha de auditoria MCP.');
     }
 });
 
@@ -911,7 +1010,7 @@ router.post('/clickup/sync', requireAuth, async (req, res) => {
     try {
         const integration = db.prepare('SELECT token, meta FROM integrations WHERE userId = ? AND provider = ?').get(req.user.id, 'clickup');
         if (!integration) {
-            return res.status(400).json({ error: 'ClickUp não conectado.' });
+            return sendError(res, 400, 'ClickUp não conectado.');
         }
 
         const token = decrypt(integration.token);
@@ -920,7 +1019,7 @@ router.post('/clickup/sync', requireAuth, async (req, res) => {
         const listId = meta.listId;
 
         if (!workspaceId) {
-            return res.status(400).json({ error: 'Workspace ID não configurado para sincronização.' });
+            return sendError(res, 400, 'Workspace ID não configurado para sincronização.');
         }
 
         const workspaceEndpoint = `${CLICKUP_API_BASE}/api/v2/team/${workspaceId}/task?archived=false`;
@@ -953,7 +1052,7 @@ router.post('/clickup/sync', requireAuth, async (req, res) => {
                 const hint = (status === 401 || status === 403)
                     ? 'Token sem permissão para leitura de tarefas/listas no ClickUp API.'
                     : 'Verifique Workspace/List ID e permissões do token.';
-                return res.status(status).json({ error: `${detail} ${hint}`.trim() });
+                return sendError(res, status, `${detail} ${hint}`.trim());
             }
 
             usedWorkspaceFallback = Boolean(listId);
@@ -1001,7 +1100,7 @@ router.post('/clickup/sync', requireAuth, async (req, res) => {
         res.json({ success: true, count, message, usedWorkspaceFallback, syncedAt });
     } catch (err) {
         console.error('ClickUp sync error:', err);
-        res.status(500).json({ error: err.message || 'Falha na sincronização com ClickUp.' });
+        sendError(res, 500, 'Falha na sincronização com ClickUp.', err.message);
     }
 });
 
@@ -1017,7 +1116,7 @@ router.delete('/:provider', requireAuth, (req, res) => {
         res.json({ success: true, message: `${provider} disconnected` });
     } catch (err) {
         console.error('Integration disconnect error:', err);
-        res.status(500).json({ error: 'Failed to disconnect interface' });
+        sendError(res, 500, 'Failed to disconnect interface');
     }
 });
 
