@@ -7,8 +7,11 @@ import { requireAuth, requireAdmin, requirePermission } from '../middleware/auth
 import bcrypt from 'bcryptjs';
 import { createTaskSchema, updateTaskSchema, createSprintSchema, updateSprintSchema, createRepoSchema, validate } from '../validation.js';
 import { uid, sendError } from '../utils.js';
+import { analyzeRepository } from '../services/codeflow.js';
 
 const router = express.Router();
+const codeflowCache = new Map();
+const CODEFLOW_CACHE_TTL_MS = 45_000;
 
 // --- Input Sanitization Helpers for Git operations ---
 
@@ -941,6 +944,41 @@ router.get('/repos/:id/files', requireAuth, (req, res) => {
     } catch (error) {
         console.error(error);
         sendError(res, 500, 'Falha ao listar arquivos', error.message);
+    }
+});
+
+// Analyze the architecture, quality and local change impact of a linked repository.
+router.get('/repos/:id/codeflow/analysis', requireAuth, (req, res) => {
+    const { id } = req.params;
+    const forceRefresh = req.query.refresh === 'true';
+
+    try {
+        const repo = db.prepare('SELECT id, name, localPath FROM repositories WHERE id = ?').get(id);
+        if (!repo) return sendError(res, 404, 'Repositório não encontrado');
+        if (!repo.localPath || !fs.existsSync(repo.localPath)) {
+            return sendError(res, 404, 'Diretório local do repositório não encontrado');
+        }
+        if (!fs.statSync(repo.localPath).isDirectory()) {
+            return sendError(res, 400, 'O caminho local configurado não é um diretório');
+        }
+
+        const cached = codeflowCache.get(id);
+        if (!forceRefresh && cached && Date.now() - cached.createdAt < CODEFLOW_CACHE_TTL_MS) {
+            return res.json({ ...cached.analysis, cache: { hit: true, ttlMs: CODEFLOW_CACHE_TTL_MS } });
+        }
+
+        const analysis = {
+            ...analyzeRepository(repo.localPath),
+            repository: { id: repo.id, name: repo.name },
+        };
+        codeflowCache.set(id, { createdAt: Date.now(), analysis });
+        return res.json({
+            ...analysis,
+            cache: { hit: false, ttlMs: CODEFLOW_CACHE_TTL_MS },
+        });
+    } catch (error) {
+        console.error('CodeFlow analysis error:', error);
+        return sendError(res, 500, 'Falha ao analisar o repositório', error.message);
     }
 });
 

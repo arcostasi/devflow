@@ -205,6 +205,73 @@ export interface Repository {
   gitlabProjectPath?: string;
 }
 
+export type CodeFlowSeverity = 'critical' | 'high' | 'medium' | 'low';
+
+export interface CodeFlowFunction {
+  name: string;
+  line: number;
+}
+
+export interface CodeFlowFile {
+  path: string;
+  name: string;
+  folder: string;
+  language: string;
+  layer: string;
+  lines: number;
+  size: number;
+  functions: CodeFlowFunction[];
+  dependencies: string[];
+  dependents: string[];
+  churn: number;
+  owner: { name: string; share: number } | null;
+  complexity: number;
+  changed: boolean;
+}
+
+export interface CodeFlowIssue {
+  id: string;
+  type: string;
+  severity: CodeFlowSeverity;
+  title: string;
+  description: string;
+  file: string;
+  line: number;
+}
+
+export interface CodeFlowAnalysis {
+  generatedAt: string;
+  durationMs: number;
+  truncated: boolean;
+  repository?: { id: string; name: string };
+  cache?: { hit: boolean; ttlMs: number };
+  stats: {
+    files: number;
+    lines: number;
+    functions: number;
+    dependencies: number;
+    folders: number;
+    securityIssues: number;
+    architectureIssues: number;
+    circularDependencies: number;
+    deadFunctions: number;
+    healthScore: number;
+    grade: 'A' | 'B' | 'C' | 'D' | 'F';
+  };
+  files: CodeFlowFile[];
+  connections: Array<{ source: string; target: string }>;
+  languageBreakdown: Array<{ language: string; files: number; lines: number }>;
+  layers: Array<{ name: string; count: number }>;
+  securityIssues: CodeFlowIssue[];
+  issues: CodeFlowIssue[];
+  patterns: Array<{ type: string; label: string; count: number; files: string[] }>;
+  cycles: string[][];
+  deadFunctions: Array<{ file: string; name: string; line: number }>;
+  changedFiles: string[];
+  impactedFiles: string[];
+  hotspots: string[];
+}
+
 export interface ActivityLog {
   id: string;
   user: User;
@@ -305,7 +372,7 @@ export interface AIFillFieldResponse {
   };
 }
 
-export type RepoDetailTab = 'code' | 'issues' | 'settings';
+export type RepoDetailTab = 'code' | 'architecture' | 'issues' | 'settings';
 export type GitIntegrationTab = 'changes' | 'source' | 'insights';
 
 export interface WorkspaceNavigationTarget {

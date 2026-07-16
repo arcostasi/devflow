@@ -65,13 +65,27 @@ app.use((req, res, next) => {
 
 // Item 12: CORS — restrict to localhost in development, configurable via env
 const allowedOrigins = process.env.CORS_ORIGINS
-    ? process.env.CORS_ORIGINS.split(',')
-    : ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3000', 'http://127.0.0.1:3000'];
+    ? process.env.CORS_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean)
+    : [
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'http://localhost:4173',
+        'http://127.0.0.1:4173',
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+    ];
+
+const isDevelopmentLoopbackOrigin = (origin) => (
+    process.env.NODE_ENV !== 'production'
+    && /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(origin)
+);
 
 app.use(cors({
     origin: (origin, callback) => {
         // Allow requests with no origin (curl, Postman, same-origin)
-        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+        if (!origin || allowedOrigins.includes(origin) || isDevelopmentLoopbackOrigin(origin)) {
+            return callback(null, true);
+        }
         callback(new Error(`CORS: origin ${origin} not allowed`));
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],

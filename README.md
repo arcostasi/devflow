@@ -18,6 +18,7 @@ DevFlow is a comprehensive software project management tool designed for teams p
 - **Kanban Board**: Drag-and-drop board with WIP limits, priority filtering, and detailed task management (sub-tasks, tracing, DoR/DoD).
 - **Product Backlog**: Centralized backlog with easy Sprint assignment and GitLab issue syncing.
 - **Local Git Integration**: Perform real Git operations (`status`, `add`, `commit`, `pull`, `push`, `checkout`) visually within your local repositories.
+- **CodeFlow Architecture Analysis**: Inspect dependency maps, health score, security findings, ownership, churn, patterns, cycles, and local change blast radius inside each repository.
 - **Deployments & Pipelines**: Track your Dev, Stage, and Prod environments, promote releases, and view CI/CD pipelines.
 - **Dark/Light Mode**: Beautiful UI with Glassmorphism effects, a command palette (Ctrl+K), and responsive design.
 

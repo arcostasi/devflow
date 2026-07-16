@@ -160,8 +160,8 @@ const AppContent: React.FC = () => {
 
   // Initial Data Fetch
   useEffect(() => {
-    loadData();
-  }, []);
+    if (isAuthenticated) loadData();
+  }, [isAuthenticated]);
 
   const loadData = async () => {
     setIsWorkspaceDataLoading(true);

@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Repository, RepoDetailTab, Task, getErrorMessage } from '../types';
-import { ArrowLeft, GitBranch, Clock, AlertCircle, Copy, FileText, Code2, GitPullRequest, Star, Eye, Folder, X, Save, Edit3, GitCommit, Settings, AlertTriangle, Trash2 } from 'lucide-react';
+import { ArrowLeft, GitBranch, Clock, AlertCircle, Copy, FileText, Code2, GitPullRequest, Star, Eye, Folder, X, Save, Edit3, GitCommit, Settings, AlertTriangle, Trash2, Network } from 'lucide-react';
 import Avatar from './Avatar';
+import CodeFlowAnalysis from './CodeFlowAnalysis';
 import { api } from '../services/api';
 import { useConfirm } from '../contexts/ConfirmContext';
 import {
@@ -82,10 +83,8 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
     const [savingSettings, setSavingSettings] = useState(false);
 
     useEffect(() => {
-        if (initialTab && initialTab !== activeTab) {
-            setActiveTab(initialTab);
-        }
-    }, [initialTab, activeTab]);
+        if (initialTab) setActiveTab(initialTab);
+    }, [initialTab]);
 
     const handleSaveSettings = async () => {
         setSavingSettings(true);
@@ -531,6 +530,12 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                         <span className="inline-flex items-center gap-2"><AlertCircle className="h-4 w-4" /> Issues <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs dark:bg-white/[0.05]">{repoTasks.length}</span></span>
                     </button>
                     <button
+                        onClick={() => setActiveTab('architecture')}
+                        className={`rounded-xl border px-4 py-2.5 text-sm font-medium transition-all ${activeTab === 'architecture' ? 'border-slate-200/80 bg-white/85 text-primary-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.08] dark:text-primary-300 dark:shadow-none' : 'border-transparent text-slate-500 hover:border-slate-200/70 hover:bg-slate-50/80 hover:text-slate-700 dark:text-[var(--text-muted)] dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:hover:text-white'}`}
+                    >
+                        <span className="inline-flex items-center gap-2"><Network className="h-4 w-4" /> Arquitetura</span>
+                    </button>
+                    <button
                         disabled
                         className="rounded-xl px-4 py-2.5 text-sm font-medium text-slate-300 dark:text-slate-600 cursor-not-allowed"
                     >
@@ -647,6 +652,10 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
                             </div>
                         </div>
                     </div>
+                )}
+
+                {activeTab === 'architecture' && (
+                    <CodeFlowAnalysis repo={repo} addToast={addToast} onOpenFile={handleOpenFile} />
                 )}
 
                 {activeTab === 'issues' && (

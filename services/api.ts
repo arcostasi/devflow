@@ -21,7 +21,8 @@ import {
     AISurface,
     AIContextPayload,
     AdminGroup,
-    SystemSettings
+    SystemSettings,
+    CodeFlowAnalysis,
 } from '../types';
 
 const API_URL = 'http://127.0.0.1:3001/api';
@@ -242,6 +243,16 @@ export const api = {
         if (!res.ok) {
             const data = await res.json();
             throw new Error(data.error || 'Falha ao listar arquivos');
+        }
+        return res.json();
+    },
+
+    getCodeFlowAnalysis: async (repoId: string, refresh = false): Promise<CodeFlowAnalysis> => {
+        const query = refresh ? '?refresh=true' : '';
+        const res = await authFetch(`${API_URL}/repos/${repoId}/codeflow/analysis${query}`);
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || 'Falha ao analisar arquitetura do repositório');
         }
         return res.json();
     },
