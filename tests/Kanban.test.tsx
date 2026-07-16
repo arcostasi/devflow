@@ -40,7 +40,7 @@ const teamMembers: User[] = [
 ];
 
 const repositories: Repository[] = [
-  { id: 'repo-1', name: 'devflow', description: '', localPath: '/code', status: 'active', createdAt: '' },
+  { id: 'repo-1', name: 'devflow', description: '', localPath: '/code', status: 'active', lastUpdated: 'agora', branch: 'main', issues: 0, createdAt: '' },
 ];
 
 const renderKanban = (tasks: Task[] = [makeTask()], extraProps: Record<string, unknown> = {}) => {
@@ -122,7 +122,7 @@ describe('Kanban', () => {
   });
 
   it('triggers openNewTaskModal when add button is clicked', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const tasks = [makeTask()];
     const { openNewTaskModal } = renderKanban(tasks);
 
@@ -132,7 +132,7 @@ describe('Kanban', () => {
   });
 
   it('opens task detail drawer when a task card is clicked', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const tasks = [makeTask({ title: 'Clickable task' })];
     renderKanban(tasks);
 
@@ -142,7 +142,7 @@ describe('Kanban', () => {
   });
 
   it('filters tasks by team member', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const tasks = [
       makeTask({ id: 't1', title: 'Alice task', status: 'todo', assignee: teamMembers[0] }),
       makeTask({ id: 't2', title: 'Bob task', status: 'doing', assignee: teamMembers[1] }),

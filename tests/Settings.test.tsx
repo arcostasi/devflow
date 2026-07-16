@@ -71,7 +71,7 @@ describe('Settings', () => {
   });
 
   it('switches to notifications tab on click', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     render(<Settings />);
 
     await user.click(screen.getByRole('button', { name: 'Notificações' }));
@@ -79,7 +79,7 @@ describe('Settings', () => {
   });
 
   it('updates integrations summary when child reports count', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     render(<Settings />);
 
     await user.click(screen.getByRole('button', { name: 'Integrações' }));

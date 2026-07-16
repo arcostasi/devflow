@@ -10,7 +10,7 @@ vi.mock('../components/AIFieldAssist', () => ({
 
 describe('NewRepoModal', () => {
   it('creates a new repository in create mode', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onCreate = vi.fn();
     const onClose = vi.fn();
 
@@ -34,7 +34,7 @@ describe('NewRepoModal', () => {
   });
 
   it('requires local path in link mode', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onCreate = vi.fn();
 
     render(<NewRepoModal isOpen onClose={vi.fn()} onCreate={onCreate} />);
@@ -48,7 +48,7 @@ describe('NewRepoModal', () => {
   });
 
   it('links existing repository with local path', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onCreate = vi.fn();
 
     render(<NewRepoModal isOpen onClose={vi.fn()} onCreate={onCreate} />);

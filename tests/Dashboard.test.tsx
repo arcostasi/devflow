@@ -16,7 +16,8 @@ const makeTasks = (overrides: Partial<Task>[] = []): Task[] => {
 
 const makeRepo = (overrides: Partial<Repository> = {}): Repository => ({
   id: 'repo-1', name: 'devflow', description: 'Main repo', localPath: '/code/devflow',
-  status: 'active', createdAt: new Date().toISOString(), ...overrides,
+  status: 'active', lastUpdated: 'agora', branch: 'main', issues: 0,
+  createdAt: new Date().toISOString(), ...overrides,
 });
 
 const defaultProps = () => ({
@@ -71,7 +72,7 @@ describe('Dashboard', () => {
   });
 
   it('renders action buttons and fires callbacks', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const props = defaultProps();
     render(<Dashboard {...props} />);
 
@@ -83,7 +84,7 @@ describe('Dashboard', () => {
   });
 
   it('navigates to kanban when clicking issues abertas card', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const props = defaultProps();
     render(<Dashboard {...props} />);
 

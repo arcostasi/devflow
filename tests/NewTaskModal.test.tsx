@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
 import NewTaskModal from '../components/NewTaskModal';
@@ -28,7 +28,7 @@ describe('NewTaskModal', () => {
   ];
 
   it('submits with defaults and closes modal', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onCreate = vi.fn();
     const onClose = vi.fn();
 
@@ -59,7 +59,7 @@ describe('NewTaskModal', () => {
   });
 
   it('submits selected assignee, repo and parsed tags', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onCreate = vi.fn();
 
     render(
@@ -79,6 +79,7 @@ describe('NewTaskModal', () => {
     await user.type(screen.getByPlaceholderText('Frontend, Bugfix, V1...'), 'frontend, bugfix,  sprint');
     await user.click(screen.getByRole('button', { name: 'Criar Tarefa' }));
 
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
     const payload = onCreate.mock.calls[0][0];
     expect(payload.repositoryId).toBe('repo-1');
     expect(payload.assignee).toMatchObject({ id: 'u-1', name: 'Alice' });
@@ -86,7 +87,7 @@ describe('NewTaskModal', () => {
   });
 
   it('does not submit when title is empty', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onCreate = vi.fn();
 
     render(

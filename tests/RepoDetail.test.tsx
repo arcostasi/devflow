@@ -107,7 +107,7 @@ describe('RepoDetail', () => {
   });
 
   it('calls onBack when clicking back button', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const { onBack } = renderRepoDetail();
 
     await user.click(screen.getByRole('button', { name: /Voltar para repositorios/i }));
@@ -115,7 +115,7 @@ describe('RepoDetail', () => {
   });
 
   it('navigates to task when clicking task in issues tab', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const { onNavigateToTask } = renderRepoDetail({}, [{ id: 'task-99', title: 'Investigate bug', status: 'review' }]);
 
     await screen.findByText('README.md');
@@ -129,7 +129,7 @@ describe('RepoDetail', () => {
   });
 
   it('calls onOpenGit from branch action card', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const { onOpenGit } = renderRepoDetail();
 
     await user.click(screen.getByRole('button', { name: /Branch atual/i }));
