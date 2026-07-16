@@ -125,7 +125,13 @@ const AppContent: React.FC = () => {
 
   const guardedSetView = async (view: ViewState) => {
     if (view !== currentView && hasUnsavedChanges()) {
-      const ok = await confirm('Você tem alterações não salvas. Deseja sair desta página?', 'Alterações não salvas');
+      const ok = await confirm({
+        title: 'Alterações não salvas',
+        message: 'Você tem alterações não salvas. Deseja sair desta página?',
+        variant: 'warning',
+        confirmText: 'Sair mesmo assim',
+        cancelText: 'Continuar editando',
+      });
       if (!ok) return;
     }
     setCurrentView(view);

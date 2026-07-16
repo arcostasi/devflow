@@ -273,7 +273,7 @@ const IntegrationsTab: React.FC<IntegrationsTabProps> = ({ addToast, onIntegrati
       return;
     }
 
-    let parsedArgs: Record<string, unknown> = {};
+    let parsedArgs: Record<string, unknown>;
     try {
       parsedArgs = toolArgsJson.trim() ? JSON.parse(toolArgsJson) : {};
     } catch {

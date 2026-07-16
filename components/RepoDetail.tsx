@@ -107,7 +107,7 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
             setLocalPath(data.localPath || '');
             return data.files;
         } catch (error: unknown) {
-            const msg: string = error?.message || '';
+            const msg: string = getErrorMessage(error);
             if (msg.includes('não encontrado') || msg.includes('not found') || msg.includes('ENOENT')) {
                 setPathMissing(true);
             } else {
@@ -874,4 +874,3 @@ const RepoDetail: React.FC<RepoDetailProps> = ({ repo, tasks, onBack, onNavigate
 };
 
 export default RepoDetail;
-

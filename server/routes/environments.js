@@ -38,7 +38,7 @@ const runGitCommand = async (repoId, args) => {
         console.error(`Git command failed: git ${args.join(' ')} in ${repo.localPath}`);
         console.error('Error details:', error);
         console.error('Stderr:', error.stderr);
-        throw new Error(`Git command failed: ${error.message} \nStderr: ${error.stderr}`);
+        throw new Error(`Git command failed: ${error.message} \nStderr: ${error.stderr}`, { cause: error });
     }
 };
 

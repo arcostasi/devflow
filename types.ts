@@ -112,6 +112,8 @@ export interface Deployment {
   deployedBy?: string;
   rollbackOf?: string;
   notes?: string;
+  /** Optional human-readable message returned by deploy/promote/rollback endpoints. */
+  message?: string;
 }
 
 
@@ -188,6 +190,7 @@ export interface Task {
   linkedBranch?: string;
   linkedPRUrl?: string;
   linkedMRIid?: string; // GitLab MR internal ID
+  createdAt?: string;
 }
 
 export interface Repository {
@@ -203,6 +206,7 @@ export interface Repository {
   pathMissing?: boolean;
   lastPipelineStatus?: 'success' | 'failed' | 'running';
   gitlabProjectPath?: string;
+  createdAt?: string;
 }
 
 export type CodeFlowSeverity = 'critical' | 'high' | 'medium' | 'low';
@@ -397,13 +401,11 @@ export enum ViewState {
 }
 
 export interface DashboardStats {
-  totalTasks: number;
-  completedTasks: number;
-  activeSprints: number;
-  totalRepos: number;
-  recentActivities: ActivityLog[];
-  sprintProgress?: number;
-  teamVelocity?: number;
+  totalCommits: number;
+  weeklyCommits: number;
+  contributions: Record<string, number>;
+  failedRepos: number;
+  failedRepoDetails?: { id: string; name: string; reason: string }[];
 }
 
 export interface Integration {

@@ -225,7 +225,7 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
             .then((activities) => {
                 if (controller.signal.aborted) return;
                 const normalizedTitle = selectedTask.title.trim().toLocaleLowerCase('pt-BR');
-                const relatedActivities = (activities as ActivityLog[]).filter((activity) => {
+                const relatedActivities = activities.items.filter((activity) => {
                     if (activity.taskId === selectedTask.id) return true;
                     return activity.target?.trim().toLocaleLowerCase('pt-BR') === normalizedTitle;
                 });
@@ -316,11 +316,11 @@ export const Kanban: React.FC<KanbanProps> = ({ initialTasks, setTasks: setParen
         e.dataTransfer.effectAllowed = 'move';
     }, []);
 
-    const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    const handleDragOver = (e: React.DragEvent<HTMLElement>) => {
         e.preventDefault(); // Necessário para permitir o drop
     };
 
-    const handleDrop = (e: React.DragEvent<HTMLDivElement>, status: TaskStatus) => {
+    const handleDrop = (e: React.DragEvent<HTMLElement>, status: TaskStatus) => {
         e.preventDefault();
         const taskId = e.dataTransfer.getData('taskId');
 

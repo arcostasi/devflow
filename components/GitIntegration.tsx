@@ -110,7 +110,7 @@ import remarkGfm from 'remark-gfm';
 interface GitIntegrationProps {
     repos: Repository[];
     addToast: (title: string, type: 'success' | 'error' | 'info', desc?: string) => void;
-    logActivity: (action: string, target: string, targetType: ActivityLog['targetType'], meta?: string) => void;
+    logActivity: (action: string, target: string, targetType: ActivityLog['targetType'], options?: { taskId?: string; meta?: string }) => void;
     onRefreshData?: () => void;
     preferredRepoId?: string | null;
     preferredTab?: GitIntegrationTab;
@@ -284,8 +284,10 @@ const MarkdownViewer: React.FC<{ content: string }> = ({ content }) => {
                 <Markdown
                     remarkPlugins={[remarkGfm]}
                     components={{
-                        code: ({ node: _node, inline, className, children, ...props }: { node?: unknown; inline?: boolean; className?: string; children?: React.ReactNode; [key: string]: unknown }) =>
-                            renderMarkdownCodeNode(isDark, Boolean(inline), className, children, props)
+                        code({ node: _node, className, children, ...props }) {
+                            const inline = !/language-/.test(className || '');
+                            return renderMarkdownCodeNode(isDark, inline, className, children, props as Record<string, unknown>);
+                        }
                     }}
                 >
                     {content}
@@ -587,7 +589,7 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
                 } catch { /* remote opcional */ }
 
             } catch (err: unknown) {
-                const msg: string = err?.message || '';
+                const msg: string = getErrorMessage(err);
                 if (msg.includes('não encontrado') || msg.includes('not found') || msg.includes('ENOENT')) {
                     setRepoPathMissing(true);
                 } else {
@@ -775,7 +777,7 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
             setStagedChanges([]);
             setCommitMessage('');
             setSelectedFileId(null);
-            logActivity('realizou commit', commitMessage.substring(0, 30) + '...', 'commit', 'HEAD');
+            logActivity('realizou commit', commitMessage.substring(0, 30) + '...', 'commit', { meta: 'HEAD' });
             addToast('Commit Realizado', 'success', `"${commitMessage.substring(0, 40)}${commitMessage.length > 40 ? '...' : ''}" salvo com sucesso.`);
             // Reload git status
             const gitStatus = await api.getRepoGitStatus(selectedRepoId);
@@ -1067,7 +1069,7 @@ const GitIntegration: React.FC<GitIntegrationProps> = ({ repos, addToast, logAct
                 <div className="page-tabs mx-4 mt-3 mb-0">
                     <button onClick={() => setActiveTab('changes')} className={`flex flex-1 items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-medium transition-all ${activeTab === 'changes' ? 'border-slate-200/80 bg-white/85 text-primary-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.08] dark:text-primary-300 dark:shadow-none' : 'border-transparent text-slate-500 hover:border-slate-200/70 hover:bg-slate-50/80 hover:text-slate-700 dark:text-[var(--text-muted)] dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:hover:text-slate-300'}`}><RefreshCw className="w-3.5 h-3.5" /> ALTERACOES</button>
                     <button onClick={() => setActiveTab('source')} className={`flex flex-1 items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-medium transition-all ${activeTab === 'source' ? 'border-slate-200/80 bg-white/85 text-primary-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.08] dark:text-primary-300 dark:shadow-none' : 'border-transparent text-slate-500 hover:border-slate-200/70 hover:bg-slate-50/80 hover:text-slate-700 dark:text-[var(--text-muted)] dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:hover:text-slate-300'}`}><Folder className="w-3.5 h-3.5" /> ARQUIVOS</button>
-                    <button onClick={() => setActiveTab('insights')} className={`flex flex-1 items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-medium transition-all ${activeTab === 'insights' ? 'border-slate-200/80 bg-white/85 text-primary-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.08] dark:text-primary-300 dark:shadow-none' : 'border-transparent text-slate-500 hover:border-slate-200/70 hover:bg-slate-50/80 hover:text-slate-700 dark:text-[var(--text-muted)] dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:hover:text-slate-300'}`}><BarChart3 className="w-3.5 h-3.5" /> INSIGHTS</button>
+                    <button onClick={() => setActiveTab('insights')} className={`flex flex-1 items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-medium transition-all ${(activeTab as GitIntegrationTab) === 'insights' ? 'border-slate-200/80 bg-white/85 text-primary-600 shadow-sm shadow-slate-200/60 dark:border-white/10 dark:bg-white/[0.08] dark:text-primary-300 dark:shadow-none' : 'border-transparent text-slate-500 hover:border-slate-200/70 hover:bg-slate-50/80 hover:text-slate-700 dark:text-[var(--text-muted)] dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:hover:text-slate-300'}`}><BarChart3 className="w-3.5 h-3.5" /> INSIGHTS</button>
                 </div>
 
                 <div className="panel-list-body relative flex-1 overflow-y-auto">

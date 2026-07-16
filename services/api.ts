@@ -7,7 +7,6 @@ import {
     Environment,
     Deployment,
     Comment,
-    User,
     AdminUser,
     Integration,
     ClickUpTool,
@@ -168,7 +167,7 @@ export const api = {
     },
 
     // Users
-    getUsers: async (): Promise<User[]> => {
+    getUsers: async (): Promise<AdminUser[]> => {
         const res = await authFetch(`${API_URL}/users`);
         if (!res.ok) throw new Error('Falha ao carregar usuários');
         return res.json();

@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState } from 'react';
-import { ActivityLog, GitIntegrationTab, Task, Repository, ViewState } from '../types';
+import { ActivityLog, GitIntegrationTab, Task, Repository, ViewState, DashboardStats } from '../types';
 import { GitPullRequest, GitCommit, GitMerge, AlertCircle, FolderGit2, AlertTriangle, ArrowRight, Plus, ExternalLink, X, ShieldCheck, Boxes, Rocket } from 'lucide-react';
 import Avatar from './Avatar';
 
@@ -16,13 +16,7 @@ interface DashboardProps {
   onOpenRepoInGit: (id: string, tab?: GitIntegrationTab) => void;
   onOpenEnvironment: (environmentId: string, repoId?: string | null) => void;
   onOpenTask: (task: Task) => void;
-  stats?: {
-    totalCommits: number;
-    weeklyCommits: number;
-    contributions: Record<string, number>;
-    failedRepos: number;
-    failedRepoDetails?: { id: string; name: string; reason: string }[];
-  };
+  stats?: DashboardStats | null;
 }
 
 const dashboardDateFormatter = new Intl.DateTimeFormat('pt-BR', {

@@ -120,7 +120,7 @@ app.use('/api', apiRouter);
 app.get('/health', (_req, res) => {
     const checks = {};
 
-    let dbLatencyMs = null;
+    let dbLatencyMs;
     try {
         const dbStart = performance.now();
         db.prepare('SELECT 1 as ok').get();
